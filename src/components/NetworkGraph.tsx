@@ -3,7 +3,7 @@
 import React, { useRef, useEffect, useCallback, useState } from "react";
 import * as d3 from "d3";
 import { Department, DepartmentEdge, GreenSkill } from "@/lib/types";
-import { computeAvgOpt, optScoreColor, skillsForDept } from "@/lib/utils";
+import { computeAvgOpt, optScoreColor, skillsForDept, getSeverityGlowColor } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface NetworkGraphProps {
@@ -18,6 +18,7 @@ interface SimNode extends d3.SimulationNodeDatum {
   dept: Department;
   color: string;
   radius: number;
+  readinessPct?: number;
 }
 
 interface SimLink extends d3.SimulationLinkDatum<SimNode> {
@@ -57,12 +58,22 @@ export default function NetworkGraph({ departments, edges, allSkills, onNodeClic
       });
     }
 
-    const nodes: SimNode[] = departments.map((dept) => ({
-      id: dept.id,
-      dept,
-      color: optScoreColor(computeAvgOpt(dept)),
-      radius: 32,
-    }));
+    const nodes: SimNode[] = departments.map((dept) => {
+      // Color based on gap severity so it aligns with sub-node colors
+      const gc = gapCountMap.get(dept.id) || { critical: 0, moderate: 0, noGap: 0 };
+      const total = gc.critical + gc.moderate + gc.noGap;
+      let color: string;
+      if (gc.critical > 0) {
+        color = "#ef4444"; // red — has critical gaps
+      } else if (gc.moderate > 0) {
+        color = "#f59e0b"; // amber — moderate gaps only
+      } else {
+        color = "#22c55e"; // green — no gaps
+      }
+      // Compute readiness % for display inside node
+      const readinessPct = total > 0 ? Math.round((gc.noGap / total) * 100) : 0;
+      return { id: dept.id, dept, color, radius: 32, readinessPct };
+    });
     const nodeMap = new Map(nodes.map((n) => [n.id, n]));
 
     const links: SimLink[] = edges
@@ -127,11 +138,11 @@ export default function NetworkGraph({ departments, edges, allSkills, onNodeClic
       })
       .on("click", (_, d) => onNodeClick(d.dept));
 
-    // Avg opt score % inside nodes
+    // Readiness % inside nodes
     const scoreText = container.append("g").selectAll("text").data(nodes).enter().append("text")
       .attr("text-anchor", "middle").attr("dy", "0.35em").attr("fill", "white")
       .attr("font-size", "12px").attr("font-weight", "700").style("pointer-events", "none")
-      .text((d) => `${(computeAvgOpt(d.dept) * 100).toFixed(0)}%`);
+      .text((d) => `${d.readinessPct ?? 0}%`);
 
     // Labels below
     const labelText = container.append("g").selectAll("text").data(nodes).enter().append("text")
@@ -200,14 +211,14 @@ export default function NetworkGraph({ departments, edges, allSkills, onNodeClic
             style={{ left: tooltip.x + 15, top: tooltip.y - 10, maxWidth: 320 }}
           >
             <div className="flex items-center gap-2 mb-2">
-              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: optScoreColor(computeAvgOpt(tooltip.dept)), boxShadow: `0 0 8px ${optScoreColor(computeAvgOpt(tooltip.dept))}66` }} />
+              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: getSeverityGlowColor(tooltip.dept.gap_severity), boxShadow: `0 0 8px ${getSeverityGlowColor(tooltip.dept.gap_severity)}66` }} />
               <span className="text-white font-semibold text-sm">{tooltip.dept.label}</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: optScoreColor(computeAvgOpt(tooltip.dept)) + "22", color: optScoreColor(computeAvgOpt(tooltip.dept)) }}>
-                {(computeAvgOpt(tooltip.dept) * 100).toFixed(0)}%
+              <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ backgroundColor: getSeverityGlowColor(tooltip.dept.gap_severity) + "22", color: getSeverityGlowColor(tooltip.dept.gap_severity) }}>
+                {tooltip.dept.gap_severity}
               </span>
             </div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-white/60">
-              <div>Avg Opt Score: <span className="text-white font-medium">{(computeAvgOpt(tooltip.dept) * 100).toFixed(0)}%</span></div>
+              <div>Readiness: <span className="text-white font-medium">{(() => { const ds = skillsForDept(allSkills, tooltip.dept); const ng = ds.filter(s => { const sv = s.severity?.toLowerCase(); return sv === "no gap" || sv === "none" || sv === "healthy"; }).length; return ds.length > 0 ? Math.round((ng / ds.length) * 100) : 0; })()}%</span></div>
               <div>Priority: <span className="text-white font-medium">{tooltip.dept.priority_level}</span></div>
               <div>Critical Gaps: <span className="text-red-400 font-medium">{skillsForDept(allSkills, tooltip.dept).filter(s => s.severity?.toLowerCase() === "critical").length}</span></div>
               <div>Moderate Gaps: <span className="text-amber-400 font-medium">{skillsForDept(allSkills, tooltip.dept).filter(s => s.severity?.toLowerCase() === "moderate").length}</span></div>
