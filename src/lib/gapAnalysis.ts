@@ -156,6 +156,8 @@ export interface DeptDirectoryData {
     currentCapability: number;
     gap: number;
     priorityLevel: string;
+    themes?: string;
+    greenSkillsCount?: number;
   };
 }
 
@@ -186,6 +188,7 @@ export function getDeptDirectoryData(deptLabel: string): DeptDirectoryData | nul
     ? (gsipData.scorecard as Record<string, {
         desired_knowledge: number; current_capability: number;
         gap: number; priority_level: string;
+        themes?: string; green_skills_count?: number;
       }>)[scorecardKey]
     : null;
 
@@ -203,7 +206,7 @@ export function getDeptDirectoryData(deptLabel: string): DeptDirectoryData | nul
       attitude: m.attitude,
     })),
     scorecard: sc
-      ? { desiredKnowledge: sc.desired_knowledge, currentCapability: sc.current_capability, gap: sc.gap, priorityLevel: sc.priority_level }
+      ? { desiredKnowledge: sc.desired_knowledge, currentCapability: sc.current_capability, gap: sc.gap, priorityLevel: sc.priority_level, themes: sc.themes, greenSkillsCount: sc.green_skills_count }
       : { desiredKnowledge: 0, currentCapability: 0, gap: 0, priorityLevel: "Unknown" },
   };
 }
