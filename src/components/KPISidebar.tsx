@@ -174,6 +174,12 @@ export default function KPISidebar({ departments, allSkills, selectedDept, curre
               <h1 className="text-sm font-bold text-white tracking-tight">GreenPulse</h1>
               <p className="text-[9px] text-white/30">Skills Gap Intelligence Platform</p>
             </div>
+            <button onClick={() => window.open("/audit", "_blank")}
+              className="flex items-center gap-1 px-2 py-1 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 rounded-md text-[10px] text-blue-400 hover:text-blue-300 transition-colors mr-1"
+              title="Open Audit Presentation">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M12 6v6l4 2" /></svg>
+              Audit
+            </button>
             <button onClick={() => window.open("/report", "_blank")}
               className="flex items-center gap-1 px-2 py-1 bg-green-500/10 hover:bg-green-500/20 border border-green-500/20 rounded-md text-[10px] text-green-400 hover:text-green-300 transition-colors mr-1"
               title="Generate Outreach Report">
