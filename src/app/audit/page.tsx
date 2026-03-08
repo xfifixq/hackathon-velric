@@ -181,9 +181,9 @@ function AuditContent() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0a0a1a] text-white">
+    <div className="h-screen flex flex-col bg-[#0a0a1a] text-white overflow-hidden">
       {/* ─── Header ─── */}
-      <header className="sticky top-0 z-50 bg-[#0a0a1a]/95 backdrop-blur-md border-b border-white/5">
+      <header className="flex-shrink-0 z-50 bg-[#0a0a1a]/95 backdrop-blur-md border-b border-white/5">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
             {/* Back to dashboard */}
@@ -209,6 +209,7 @@ function AuditContent() {
         </div>
       </header>
 
+      <div className="flex-1 min-h-0 overflow-y-auto">
       {/* ─── Hero + KPIs ─── */}
       <div className="max-w-7xl mx-auto px-6 pt-8 pb-4">
         <h2 className="text-3xl font-bold mb-2 bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">
@@ -359,6 +360,7 @@ function AuditContent() {
       <footer className="border-t border-white/5 py-6 text-center text-[10px] text-white/20">
         Powered by GreenPulse &middot; Green Skills Intelligence Platform
       </footer>
+      </div>
     </div>
   );
 }

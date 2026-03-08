@@ -4,10 +4,39 @@
 -- Tailored for Arsenal Football Club (Sports sector)
 -- ============================================================
 
--- Clear existing data
+-- Clear existing data (must respect FK order: assessment_responses -> assessment_questions -> departments)
+DELETE FROM assessment_responses;
+DELETE FROM assessment_questions;
 DELETE FROM green_skills;
 DELETE FROM department_edges;
 DELETE FROM departments;
+
+-- Add columns required by Arsenal seed (supabase-full-setup only has department, label, created_at)
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS id TEXT UNIQUE;
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS overall_score NUMERIC(5,2);
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS gap_severity TEXT;
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS critical_gap_count INT;
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS moderate_gap_count INT;
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS no_gap_count INT;
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS top_gaps TEXT;
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS desired_knowledge TEXT;
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS priority_level TEXT;
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS opt_carbon_footprint NUMERIC(5,2);
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS opt_renewable_energy NUMERIC(5,2);
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS opt_hvac NUMERIC(5,2);
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS opt_office_space NUMERIC(5,2);
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS opt_remote_work NUMERIC(5,2);
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS opt_work_schedule NUMERIC(5,2);
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS opt_water_use NUMERIC(5,2);
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS opt_digital_footprint NUMERIC(5,2);
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS opt_ai_compute NUMERIC(5,2);
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS opt_iot_telemetry NUMERIC(5,2);
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS opt_hardware_circularity NUMERIC(5,2);
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS opt_supply_chain_emissions NUMERIC(5,2);
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS opt_logistics_shipping NUMERIC(5,2);
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS opt_fleet_electrification NUMERIC(5,2);
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS opt_employee_commuting NUMERIC(5,2);
+ALTER TABLE departments ADD COLUMN IF NOT EXISTS opt_material_waste NUMERIC(5,2);
 
 -- ========================
 -- DEPARTMENTS
@@ -132,6 +161,13 @@ VALUES (
   0.1, 0.25, 0.17, 0.03, 0.09,
   0.1, 0.03, 0.09, 0.7, 0.15
 );
+
+-- Add columns required by Arsenal seed (green_skills base schema lacks these)
+ALTER TABLE green_skills ADD COLUMN IF NOT EXISTS current_level NUMERIC(5,2);
+ALTER TABLE green_skills ADD COLUMN IF NOT EXISTS gap NUMERIC(5,2);
+ALTER TABLE green_skills ADD COLUMN IF NOT EXISTS severity TEXT;
+ALTER TABLE green_skills ADD COLUMN IF NOT EXISTS desired_knowledge TEXT;
+ALTER TABLE green_skills ADD COLUMN IF NOT EXISTS priority_level TEXT;
 
 -- ========================
 -- GREEN SKILLS
