@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { Department, GreenSkill } from "@/lib/types";
 import {
   fetchDepartments, fetchEdges, fetchAllSkills,
@@ -23,9 +23,12 @@ export default function ReportPage() {
 }
 
 function ReportContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const companyId = searchParams.get("company_id");
   const companyName = searchParams.get("company") || "Arsenal FC";
+
+  const backUrl = companyId ? `/?company_id=${companyId}${searchParams.get("company") ? `&company=${encodeURIComponent(searchParams.get("company")!)}` : ""}` : "/";
 
   const [departments, setDepartments] = useState<Department[]>([]);
   const [allSkills, setAllSkills] = useState<GreenSkill[]>([]);
@@ -138,7 +141,7 @@ function ReportContent() {
           Export PDF
         </button>
         <button
-          onClick={() => window.history.back()}
+          onClick={() => router.push(backUrl)}
           className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg shadow hover:bg-gray-300 transition-colors"
         >
           Back to Dashboard
