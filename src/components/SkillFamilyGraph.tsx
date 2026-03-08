@@ -56,6 +56,7 @@ type DrawerTab = "overview" | "directory" | "actions" | "maturity" | "assessment
 
 export default function SkillFamilyGraph({ department, skills, edges, allDepartments, onFamilyClick, onBack }: SkillFamilyGraphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const leafNodesRef = useRef<GraphNode[]>([]);
   const [tooltip, setTooltip] = useState<{ node: GraphNode; x: number; y: number } | null>(null);
   const [activeTab, setActiveTab] = useState<DrawerTab>("overview");
   const [drawerOpen, setDrawerOpen] = useState(true);
@@ -101,6 +102,16 @@ export default function SkillFamilyGraph({ department, skills, edges, allDepartm
   }, [drawerWidth]);
 
   const deptLabel = department.label || department.department;
+
+  // Gap counts at component level — used in legend and buildGraph
+  const critCount = useMemo(() => skills.filter(s => s.severity?.toLowerCase() === "critical").length, [skills]);
+  const modCount = useMemo(() => skills.filter(s => s.severity?.toLowerCase() === "moderate").length, [skills]);
+  const noGapCount = useMemo(() => skills.filter(s => {
+    const sv = s.severity?.toLowerCase();
+    return sv === "no gap" || sv === "none" || sv === "healthy";
+  }).length, [skills]);
+  const readinessPct = useMemo(() => skills.length > 0 ? Math.round((noGapCount / skills.length) * 100) : 0, [skills, noGapCount]);
+
   const directoryData = useMemo(() => getDeptDirectoryData(deptLabel), [deptLabel]);
   const priorityActions = useMemo(() => getPriorityActions(department, skills), [department, skills]);
   const assessments = useMemo(() => getDeptAssessments(deptLabel), [deptLabel]);
@@ -127,12 +138,13 @@ export default function SkillFamilyGraph({ department, skills, edges, allDepartm
     const width = svgRef.current.clientWidth;
     const height = svgRef.current.clientHeight;
 
-    // ── Compute department avg opt score (average of all 16 opt columns) ──
+    // ── Compute department gap severity from actual skills ──
     const deptAvgOpt = computeAvgOpt(department);
-    const hubSev = optSeverity(deptAvgOpt);
+    // Hub color from gap severity — matches NetworkGraph
+    const hubColor = critCount > 0 ? "#ef4444" : modCount > 0 ? "#f59e0b" : "#22c55e";
     const hubNode: GraphNode = {
       id: "hub", label: deptLabel, kind: "hub",
-      color: hubSev.color, radius: 44, avgOptScore: deptAvgOpt,
+      color: hubColor, radius: 44, avgOptScore: deptAvgOpt,
     };
 
     // ── Only show opt metrics that have a non-zero dept value ──
@@ -140,13 +152,13 @@ export default function SkillFamilyGraph({ department, skills, edges, allDepartm
     // Fallback: if no opt columns are non-zero, show all of them
     const displayCols = activeOptCols.length > 0 ? activeOptCols : [...OPT_COLUMNS];
 
+    // Create opt nodes first with placeholder color — will be updated after leaf assignment
     const optNodes: GraphNode[] = displayCols.map((col) => {
       const val = Number((department as any)[col]) || 0;
-      const sev = optSeverity(val);
       return {
         id: `opt-${col}`, label: formatOptLabel(col), kind: "opt" as NodeKind,
-        color: sev.color, radius: 22, optKey: col, optValue: val, optSeverity: sev.severity,
-        childCount: 0, // will be updated below
+        color: "#6b7280", radius: 22, optKey: col, optValue: val, optSeverity: "unknown",
+        childCount: 0,
       };
     });
 
@@ -199,8 +211,29 @@ export default function SkillFamilyGraph({ department, skills, edges, allDepartm
       });
     }
 
-    // Update child counts on opt nodes
-    optNodes.forEach(on => { on.childCount = optChildCounts[on.id] || 0; });
+    // Update child counts and derive opt node colors from their child leaf severities
+    optNodes.forEach(on => {
+      on.childCount = optChildCounts[on.id] || 0;
+      const children = leafNodes.filter(ln => ln.parentId === on.id);
+      const cCrit = children.filter(c => c.severity?.toLowerCase() === "critical").length;
+      const cMod = children.filter(c => c.severity?.toLowerCase() === "moderate").length;
+      if (children.length === 0) {
+        on.color = "#6b7280"; // gray — no children
+        on.optSeverity = "none";
+      } else if (cCrit > 0) {
+        on.color = "#ef4444"; // red — has critical children
+        on.optSeverity = "critical";
+      } else if (cMod > 0) {
+        on.color = "#f59e0b"; // amber — moderate children only
+        on.optSeverity = "moderate";
+      } else {
+        on.color = "#22c55e"; // green — all children healthy
+        on.optSeverity = "healthy";
+      }
+    });
+
+    // Store for tooltip access
+    leafNodesRef.current = leafNodes;
 
     // ── Assemble ──
     const allNodes = [hubNode, ...optNodes, ...leafNodes];
@@ -255,14 +288,14 @@ export default function SkillFamilyGraph({ department, skills, edges, allDepartm
     const hubCircle = container.append("circle")
       .attr("r", hubNode.radius).attr("fill", hubNode.color).attr("opacity", 0.9)
       .attr("stroke", "rgba(255,255,255,0.25)").attr("stroke-width", 2).attr("filter", "url(#sf-glow-filter)");
-    // Hub text: avg opt score (as %)
+    // Hub text: readiness % (matching NetworkGraph)
     const hubMainText = container.append("text")
       .attr("text-anchor", "middle").attr("dy", "-0.3em").attr("fill", "white")
       .attr("font-size", "14px").attr("font-weight", "700").style("pointer-events", "none")
-      .text(`${(deptAvgOpt * 100).toFixed(0)}%`);
+      .text(`${readinessPct}%`);
     const hubSubText = container.append("text")
       .attr("text-anchor", "middle").attr("dy", "1em").attr("fill", "rgba(255,255,255,0.45)")
-      .attr("font-size", "7px").style("pointer-events", "none").text("avg opt score");
+      .attr("font-size", "7px").style("pointer-events", "none").text("readiness");
     const hubLabelText = container.append("text")
       .attr("text-anchor", "middle").attr("dy", hubNode.radius + 14)
       .attr("fill", "rgba(255,255,255,0.85)").attr("font-size", "11px").attr("font-weight", "600")
@@ -287,11 +320,18 @@ export default function SkillFamilyGraph({ department, skills, edges, allDepartm
       })
       .on("click", (_, d) => { setActiveTab("factors"); setDrawerOpen(true); });
 
-    // Opt % inside node
+    // Opt node inner text: show child readiness
     const optInnerText = container.append("g").selectAll("text").data(optNodes).enter().append("text")
       .attr("text-anchor", "middle").attr("dy", "0.35em").attr("fill", "white")
       .attr("font-size", "9px").attr("font-weight", "700").style("pointer-events", "none")
-      .text((d) => `${((d.optValue || 0) * 100).toFixed(0)}%`);
+      .text((d) => {
+        const children = leafNodes.filter(ln => ln.parentId === d.id);
+        const noGap = children.filter(c => {
+          const sv = c.severity?.toLowerCase();
+          return sv === "no gap" || sv === "none" || sv === "healthy";
+        }).length;
+        return children.length > 0 ? `${Math.round((noGap / children.length) * 100)}%` : "—";
+      });
 
     // Opt label below node
     const optLabelGroup = container.append("g").selectAll("text").data(optNodes).enter().append("text")
@@ -381,15 +421,12 @@ export default function SkillFamilyGraph({ department, skills, edges, allDepartm
     leafNodeGroup.call(leafDrag);
 
     return () => { simulation.stop(); };
-  }, [department, skills, deptLabel]);
+  }, [department, skills, deptLabel, critCount, modCount, noGapCount, readinessPct]);
 
   useEffect(() => { const cleanup = buildGraph(); return () => { cleanup?.(); }; }, [buildGraph]);
 
-  const critCount = skills.filter((s) => s.severity?.toLowerCase() === "critical").length;
-  const modCount = skills.filter((s) => s.severity?.toLowerCase() === "moderate").length;
-  const noGapCount = skills.filter((s) => s.severity?.toLowerCase() === "no gap" || s.severity?.toLowerCase() === "none").length;
   const deptAvgOpt = computeAvgOpt(department);
-  const sevColor = optScoreColor(deptAvgOpt);
+  const sevColor = critCount > 0 ? "#ef4444" : modCount > 0 ? "#f59e0b" : "#22c55e";
 
   const optFactors = OPT_COLUMNS.map((col) => ({
     key: col, label: formatOptLabel(col), value: Number((department as any)[col]) || 0,
@@ -435,9 +472,9 @@ export default function SkillFamilyGraph({ department, skills, edges, allDepartm
 
         {/* Mini legend */}
         <div className="absolute bottom-4 left-4 z-10 flex items-center gap-3 text-[9px] text-white/40 bg-[#0c0c24]/80 backdrop-blur-sm px-3 py-2 rounded-lg border border-white/5">
-          <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-green-500" /><span>High</span></div>
-          <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-amber-500" /><span>Moderate</span></div>
-          <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-red-500" /><span>Low</span></div>
+          <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-green-500" /><span>Ready</span></div>
+          <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-amber-500" /><span>Moderate Gap</span></div>
+          <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-red-500" /><span>Critical Gap</span></div>
           <span className="text-white/20 mx-1">|</span>
           <span className="text-red-400">{critCount}C</span>
           <span className="text-amber-400">{modCount}M</span>
@@ -452,30 +489,37 @@ export default function SkillFamilyGraph({ department, skills, edges, allDepartm
               className="absolute pointer-events-none z-50 bg-[#0f0f2e]/95 backdrop-blur-sm border border-white/10 rounded-lg px-4 py-3 shadow-xl"
               style={{ left: tooltip.x + 15, top: tooltip.y - 10, maxWidth: 340 }}>
               {tooltip.node.kind === "opt" ? (
-                <>
-                  <div className="flex items-center gap-2 mb-1">
-                    <div className="w-4 h-4 rounded-full" style={{ backgroundColor: tooltip.node.color }} />
-                    <span className="text-white font-semibold text-sm">{tooltip.node.label}</span>
-                  </div>
-                  <div className="mt-1.5 flex items-center gap-2">
-                    <span className="text-[9px] text-white/30">Score</span>
-                    <div className="flex-1 h-2 bg-white/10 rounded-full overflow-hidden">
-                      <div className="h-full rounded-full" style={{
-                        width: `${(tooltip.node.optValue || 0) * 100}%`,
-                        backgroundColor: tooltip.node.color,
-                      }} />
-                    </div>
-                    <span className="text-[10px] font-mono font-bold" style={{ color: tooltip.node.color }}>
-                      {((tooltip.node.optValue || 0) * 100).toFixed(0)}%
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2 text-[10px] mt-1.5">
-                    <span style={{ color: tooltip.node.color }} className="font-semibold capitalize">{tooltip.node.optSeverity} impact</span>
-                    <span className="text-white/30">|</span>
-                    <span className="text-white/40">{tooltip.node.childCount} contributing skill{tooltip.node.childCount !== 1 ? "s" : ""}</span>
-                  </div>
-                  <div className="text-[9px] text-white/25 mt-1">Click to view all opt factors</div>
-                </>
+                (() => {
+                  const children = leafNodesRef.current.filter(ln => ln.parentId === tooltip.node.id);
+                  const cCrit = children.filter(c => c.severity?.toLowerCase() === "critical").length;
+                  const cMod = children.filter(c => c.severity?.toLowerCase() === "moderate").length;
+                  const cOk = children.filter(c => { const sv = c.severity?.toLowerCase(); return sv === "no gap" || sv === "none" || sv === "healthy"; }).length;
+                  return (
+                    <>
+                      <div className="flex items-center gap-2 mb-1">
+                        <div className="w-4 h-4 rounded-full" style={{ backgroundColor: tooltip.node.color }} />
+                        <span className="text-white font-semibold text-sm">{tooltip.node.label}</span>
+                      </div>
+                      <div className="flex items-center gap-3 text-[10px] mt-1.5">
+                        {cCrit > 0 && <span className="text-red-400 font-medium">{cCrit} critical</span>}
+                        {cMod > 0 && <span className="text-amber-400 font-medium">{cMod} moderate</span>}
+                        {cOk > 0 && <span className="text-green-400 font-medium">{cOk} ready</span>}
+                      </div>
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <span className="text-[9px] text-white/30">Opt impact</span>
+                        <div className="flex-1 h-2 bg-white/10 rounded-full overflow-hidden">
+                          <div className="h-full rounded-full bg-blue-400" style={{
+                            width: `${(tooltip.node.optValue || 0) * 100}%`,
+                          }} />
+                        </div>
+                        <span className="text-[10px] font-mono text-blue-400">
+                          {((tooltip.node.optValue || 0) * 100).toFixed(0)}%
+                        </span>
+                      </div>
+                      <div className="text-[9px] text-white/25 mt-1">{tooltip.node.childCount} skill{tooltip.node.childCount !== 1 ? "s" : ""} · Click to view factors</div>
+                    </>
+                  );
+                })()
               ) : (
                 <>
                   <div className="flex items-center gap-2 mb-1">
@@ -520,7 +564,7 @@ export default function SkillFamilyGraph({ department, skills, edges, allDepartm
                 <div className="w-4 h-4 rounded-full" style={{ backgroundColor: sevColor, boxShadow: `0 0 10px ${sevColor}66` }} />
                 <span className="text-white font-bold text-base">{deptLabel}</span>
                 <span className="text-[10px] px-2 py-0.5 rounded font-medium" style={{ color: sevColor, backgroundColor: sevColor + "22" }}>
-                  {(deptAvgOpt * 100).toFixed(0)}% opt
+                  {readinessPct}% ready
                 </span>
                 <span className="text-[10px] px-2 py-0.5 rounded bg-white/5 text-white/50 ml-auto">
                   {skills.length} skills
