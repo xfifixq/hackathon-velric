@@ -156,7 +156,6 @@ function AuditContent() {
   // Org-wide data
   const topRisks = useMemo(() => getTopPrioritySkills(allSkills, 5, departments), [allSkills, departments]);
   const complianceRisks = useMemo(() => getComplianceRiskSkills(allSkills), [allSkills]);
-  const sectors = useMemo(() => getAllSectors(), []);
 
   // Handle dept click from NetworkGraph
   const handleNodeClick = useCallback((dept: Department) => {
@@ -341,17 +340,6 @@ function AuditContent() {
               </div>
             )}
 
-            {/* Sector Context */}
-            {sectors.length > 0 && (
-              <div className="mb-10">
-                <h3 className="text-lg font-semibold mb-4 text-white/80">Sector Intelligence</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {sectors.map((sector, i) => (
-                    <SectorCard key={i} sector={sector} />
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         )}
       </div>
