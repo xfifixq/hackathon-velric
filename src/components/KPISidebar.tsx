@@ -174,6 +174,12 @@ export default function KPISidebar({ departments, allSkills, selectedDept, curre
               <h1 className="text-sm font-bold text-white tracking-tight">GreenPulse</h1>
               <p className="text-[9px] text-white/30">Skills Gap Intelligence Platform</p>
             </div>
+            <button onClick={() => window.open("/report", "_blank")}
+              className="flex items-center gap-1 px-2 py-1 bg-green-500/10 hover:bg-green-500/20 border border-green-500/20 rounded-md text-[10px] text-green-400 hover:text-green-300 transition-colors mr-1"
+              title="Generate Outreach Report">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><polyline points="14,2 14,8 20,8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /><polyline points="10,9 9,9 8,9" /></svg>
+              Report
+            </button>
             <button onClick={handleExport}
               className="flex items-center gap-1 px-2 py-1 bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 rounded-md text-[10px] text-white/50 hover:text-white/80 transition-colors"
               title="Export CSV">
@@ -191,8 +197,8 @@ export default function KPISidebar({ departments, allSkills, selectedDept, curre
               <div className="text-[9px] text-white/40 mt-0.5">Readiness</div>
             </div>
             <div className="text-center p-2 rounded-lg bg-white/[0.03]">
-              <div className="text-xl font-bold text-white">{avgOptAll}<span className="text-xs text-white/40">%</span></div>
-              <div className="text-[9px] text-white/40 mt-0.5">Avg Opt</div>
+              <div className="text-xl font-bold text-red-400">{totalCritical}</div>
+              <div className="text-[9px] text-white/40 mt-0.5">Critical</div>
             </div>
             <div className="text-center p-2 rounded-lg bg-white/[0.03]">
               <div className="text-xl font-bold text-white">{totalSkills}</div>
@@ -254,7 +260,7 @@ export default function KPISidebar({ departments, allSkills, selectedDept, curre
                           <span className="text-white/30">Risk: {(riskScore * 100).toFixed(0)}%</span>
                         </div>
                       </div>
-                      <span className="text-[10px] font-mono" style={{ color: optScoreColor(computeAvgOpt(dept)) }}>{(computeAvgOpt(dept) * 100).toFixed(0)}%</span>
+                      <span className="text-[10px] font-mono text-red-400">{deptGapCounts.get(dept.id)?.critical || 0} gaps</span>
                     </div>
                   ))}
                 </div>
@@ -266,17 +272,18 @@ export default function KPISidebar({ departments, allSkills, selectedDept, curre
               <div className="text-[9px] uppercase tracking-wider text-white/30 mb-2">All Departments</div>
               <div className="space-y-1">
                 {sortedDepts.map((dept) => {
-                  const dAvg = computeAvgOpt(dept);
-                  const color = optScoreColor(dAvg);
                   const gc = deptGapCounts.get(dept.id) || { critical: 0, moderate: 0, noGap: 0 };
                   const total = gc.critical + gc.moderate + gc.noGap;
+                  const readiness = total > 0 ? Math.round((gc.noGap / total) * 100) : 0;
+                  // Color based on gap severity — consistent with network graph nodes
+                  const color = gc.critical > 0 ? "#ef4444" : gc.moderate > 0 ? "#f59e0b" : "#22c55e";
                   return (
                     <div key={dept.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white/[0.02] border border-transparent">
                       <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color, boxShadow: `0 0 4px ${color}66` }} />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
                           <span className="text-[11px] text-white/80 truncate font-medium">{dept.label}</span>
-                          <span className="text-[10px] font-mono ml-1" style={{ color }}>{(dAvg * 100).toFixed(0)}%</span>
+                          <span className="text-[10px] font-mono ml-1" style={{ color }}>{readiness}%</span>
                         </div>
                         <div className="flex h-1 rounded-full overflow-hidden mt-0.5">
                           {total > 0 && (
@@ -289,7 +296,7 @@ export default function KPISidebar({ departments, allSkills, selectedDept, curre
                         </div>
                       </div>
                       <span className="text-[9px] font-medium px-1 py-0.5 rounded" style={{ color, backgroundColor: color + "15" }}>
-                        {(dAvg * 100).toFixed(0)}%
+                        {readiness}%
                       </span>
                     </div>
                   );
