@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
+import React, { useState, useEffect, useMemo, useRef, useCallback, Suspense } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Department, GreenSkill } from "@/lib/types";
+import { Department, DepartmentEdge, GreenSkill } from "@/lib/types";
 import {
   fetchDepartments, fetchAllSkills, fetchEdges,
   fetchCompanyDepartmentScores, fetchCompanySkillGaps,
@@ -12,11 +12,12 @@ import { skillsForDept, OPT_COLUMNS, formatOptLabel, computeAvgOpt } from "@/lib
 import {
   getDeptDirectoryData, getDeptAssessments, getAllSectors,
   getDeptSectorPriorities, getDeptSkillsMap, getDeptActions,
-  getTopPrioritySkills, getComplianceRiskSkills, getQuickWins,
+  getTopPrioritySkills, getComplianceRiskSkills,
   computeSkillRiskScore, computeDeptRiskScore, getMaturityLabel,
   MATURITY_LEVELS, getPriorityActions,
   type DeptDirectoryData, type ActionEntry, type AssessmentQuestion,
 } from "@/lib/gapAnalysis";
+import NetworkGraph from "@/components/NetworkGraph";
 
 export default function AuditPage() {
   return (
@@ -46,27 +47,32 @@ function sevBg(sev?: string): string {
 
 function AuditContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const companyId = searchParams.get("company_id");
   const companyName = searchParams.get("company") || "Arsenal FC";
 
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [edges, setEdges] = useState<DepartmentEdge[]>([]);
   const [allSkills, setAllSkills] = useState<GreenSkill[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedDept, setSelectedDept] = useState<Department | null>(null);
   const [selectedSkill, setSelectedSkill] = useState<GreenSkill | null>(null);
   const [expandedActions, setExpandedActions] = useState<Set<number>>(new Set());
 
+  const detailRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     async function load() {
       try {
         let depts: Department[];
+        let edgesData: DepartmentEdge[];
         let skills: GreenSkill[];
         if (companyId) {
-          [depts, , skills] = await Promise.all([
+          [depts, edgesData, skills] = await Promise.all([
             fetchCompanyDepartmentScores(companyId), fetchEdges(), fetchCompanySkillGaps(companyId),
           ]);
         } else {
-          [depts, , skills] = await Promise.all([
+          [depts, edgesData, skills] = await Promise.all([
             fetchDepartments(), fetchEdges(), fetchAllSkills(),
           ]);
         }
@@ -88,10 +94,11 @@ function AuditContent() {
           return e;
         });
         setDepartments(enriched);
+        setEdges(edgesData);
         setAllSkills(skills);
       } catch {
-        // Use demo data if DB fails — data is seeded
         setDepartments([]);
+        setEdges([]);
         setAllSkills([]);
       } finally {
         setLoading(false);
@@ -146,6 +153,22 @@ function AuditContent() {
     return getDeptSectorPriorities(selectedDept.label || selectedDept.department);
   }, [selectedDept]);
 
+  // Org-wide data
+  const topRisks = useMemo(() => getTopPrioritySkills(allSkills, 5, departments), [allSkills, departments]);
+  const complianceRisks = useMemo(() => getComplianceRiskSkills(allSkills), [allSkills]);
+  const sectors = useMemo(() => getAllSectors(), []);
+
+  // Handle dept click from NetworkGraph
+  const handleNodeClick = useCallback((dept: Department) => {
+    setSelectedDept(dept);
+    setSelectedSkill(null);
+    setExpandedActions(new Set());
+    // Scroll to detail after a tick
+    setTimeout(() => {
+      detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 100);
+  }, []);
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#0a0a1a]">
@@ -163,11 +186,13 @@ function AuditContent() {
       <header className="sticky top-0 z-50 bg-[#0a0a1a]/95 backdrop-blur-md border-b border-white/5">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center text-white font-bold text-sm">G</div>
-              <span className="text-white/80 font-semibold text-lg tracking-tight">GreenPulse</span>
-            </div>
+            {/* Back to dashboard */}
+            <button onClick={() => router.push("/")} className="flex items-center gap-1.5 text-white/40 hover:text-white/70 transition-colors text-sm" title="Back to Dashboard">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+              Dashboard
+            </button>
             <div className="h-6 w-px bg-white/10" />
+            <span className="text-white/80 font-semibold text-lg tracking-tight">GreenPulse</span>
             <h1 className="text-white font-bold text-lg">{companyName}</h1>
             <span className="text-[10px] px-2 py-0.5 rounded bg-white/5 text-white/40 uppercase tracking-wider">Green Skills Audit</span>
           </div>
@@ -184,214 +209,156 @@ function AuditContent() {
         </div>
       </header>
 
-      <AnimatePresence mode="wait">
-        {!selectedDept && !selectedSkill && (
-          <motion.div key="org" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
-            <OrgOverview
-              companyName={companyName}
-              departments={departments}
-              allSkills={allSkills}
-              orgStats={orgStats}
-              onSelectDept={setSelectedDept}
-            />
-          </motion.div>
+      {/* ─── Hero + KPIs ─── */}
+      <div className="max-w-7xl mx-auto px-6 pt-8 pb-4">
+        <h2 className="text-3xl font-bold mb-2 bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">
+          Green Skills Gap Audit
+        </h2>
+        <p className="text-white/40 text-sm max-w-2xl mb-6">
+          Comprehensive assessment of {companyName}&apos;s green skills readiness across {departments.length} departments
+          and {orgStats.total} individual skill competencies. Click any department node to explore.
+        </p>
+
+        <div className="grid grid-cols-4 gap-4 mb-6">
+          <KPICard label="Readiness Score" value={`${orgStats.readiness}%`} color={orgStats.readiness >= 50 ? "#22c55e" : orgStats.readiness >= 25 ? "#f59e0b" : "#ef4444"} />
+          <KPICard label="Critical Gaps" value={`${orgStats.crit}`} color="#ef4444" sub={`${orgStats.total > 0 ? Math.round((orgStats.crit / orgStats.total) * 100) : 0}% of skills`} />
+          <KPICard label="Moderate Gaps" value={`${orgStats.mod}`} color="#f59e0b" sub={`${orgStats.total > 0 ? Math.round((orgStats.mod / orgStats.total) * 100) : 0}% of skills`} />
+          <KPICard label="Skills Ready" value={`${orgStats.ready}`} color="#22c55e" sub={`${orgStats.total > 0 ? Math.round((orgStats.ready / orgStats.total) * 100) : 0}% of skills`} />
+        </div>
+
+        {/* Gap Distribution Bar */}
+        <div className="mb-2">
+          <div className="flex items-center gap-3 mb-1.5 text-xs text-white/40">
+            <span>Organisation Gap Distribution</span>
+          </div>
+          <div className="flex h-3 rounded-full overflow-hidden bg-white/5">
+            {orgStats.total > 0 && (
+              <>
+                <div className="bg-red-500 transition-all" style={{ width: `${(orgStats.crit / orgStats.total) * 100}%` }} />
+                <div className="bg-amber-500 transition-all" style={{ width: `${(orgStats.mod / orgStats.total) * 100}%` }} />
+                <div className="bg-green-500 transition-all" style={{ width: `${(orgStats.ready / orgStats.total) * 100}%` }} />
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ─── Interactive Network Graph ─── */}
+      <div className="relative bg-[#0a0a1a] border-y border-white/5" style={{ height: "60vh", minHeight: 450 }}>
+        {/* Selected dept indicator */}
+        {selectedDept && (
+          <div className="absolute top-4 left-6 z-10 flex items-center gap-2 bg-[#0a0a1a]/90 backdrop-blur-sm px-3 py-2 rounded-lg border border-white/10">
+            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: sevColor(selectedDept.gap_severity) }} />
+            <span className="text-white text-sm font-medium">{selectedDept.label || selectedDept.department}</span>
+            <button onClick={() => { setSelectedDept(null); setSelectedSkill(null); }} className="text-white/30 hover:text-white/70 ml-2 text-xs">Clear</button>
+          </div>
         )}
-        {selectedDept && !selectedSkill && (
-          <motion.div key="dept" initial={{ opacity: 0, x: 40 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -40 }} transition={{ duration: 0.3 }}>
-            <DeptView
-              dept={selectedDept}
-              skills={deptSkills}
-              deptDir={deptDir}
-              deptActions={deptActions}
-              deptAssessments={deptAssessments}
-              priorityActions={priorityActions}
-              sectorPriorities={sectorPriorities}
-              expandedActions={expandedActions}
-              setExpandedActions={setExpandedActions}
-              onBack={() => { setSelectedDept(null); setExpandedActions(new Set()); }}
-              onSelectSkill={setSelectedSkill}
-            />
-          </motion.div>
+        <NetworkGraph
+          departments={departments}
+          edges={edges}
+          allSkills={allSkills}
+          onNodeClick={handleNodeClick}
+        />
+      </div>
+
+      {/* ─── Detail section (appears below graph on dept select) ─── */}
+      <div ref={detailRef}>
+        <AnimatePresence mode="wait">
+          {selectedDept && !selectedSkill && (
+            <motion.div key={`dept-${selectedDept.id}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} transition={{ duration: 0.3 }}>
+              <DeptView
+                dept={selectedDept}
+                skills={deptSkills}
+                deptDir={deptDir}
+                deptActions={deptActions}
+                deptAssessments={deptAssessments}
+                priorityActions={priorityActions}
+                sectorPriorities={sectorPriorities}
+                expandedActions={expandedActions}
+                setExpandedActions={setExpandedActions}
+                onSelectSkill={(s) => {
+                  setSelectedSkill(s);
+                  setTimeout(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
+                }}
+              />
+            </motion.div>
+          )}
+          {selectedSkill && (
+            <motion.div key={`skill-${selectedSkill.id}`} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} transition={{ duration: 0.3 }}>
+              <SkillView
+                skill={selectedSkill}
+                dept={selectedDept}
+                onBack={() => setSelectedSkill(null)}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Show org-level content when no dept selected */}
+        {!selectedDept && (
+          <div className="max-w-7xl mx-auto px-6 py-8">
+            {/* Top Priority Risks */}
+            {topRisks.length > 0 && (
+              <div className="mb-10">
+                <h3 className="text-lg font-semibold mb-4 text-white/80">Top Priority Risks</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {topRisks.map(({ skill, riskScore }, i) => (
+                    <div key={i} className="bg-white/[0.03] border border-white/5 rounded-lg p-4">
+                      <div className="flex items-start gap-2 mb-2">
+                        <div className="w-2 h-2 rounded-full mt-1.5 flex-shrink-0" style={{ backgroundColor: sevColor(skill.severity) }} />
+                        <div>
+                          <div className="text-white text-sm font-medium">{skill.green_skill}</div>
+                          <div className="text-white/30 text-[10px]">{skill.department} &middot; {skill.skill_family}</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 text-[10px] mt-2">
+                        <span className={`px-1.5 py-0.5 rounded border ${sevBg(skill.severity)}`}>{skill.severity}</span>
+                        <span className="text-white/30">Gap: {skill.gap}</span>
+                        <span className="text-white/30">Risk: {riskScore.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Compliance Risks */}
+            {complianceRisks.length > 0 && (
+              <div className="mb-10">
+                <h3 className="text-lg font-semibold mb-4 text-red-400/80">Compliance Risk Flags</h3>
+                <div className="bg-red-500/[0.05] border border-red-500/10 rounded-xl p-5">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {complianceRisks.slice(0, 8).map((skill, i) => (
+                      <div key={i} className="flex items-center gap-2 text-sm">
+                        <div className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                        <span className="text-red-400/80 font-medium">{skill.green_skill}</span>
+                        <span className="text-white/20 text-[10px]">{skill.department}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Sector Context */}
+            {sectors.length > 0 && (
+              <div className="mb-10">
+                <h3 className="text-lg font-semibold mb-4 text-white/80">Sector Intelligence</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {sectors.map((sector, i) => (
+                    <SectorCard key={i} sector={sector} />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         )}
-        {selectedSkill && (
-          <motion.div key="skill" initial={{ opacity: 0, x: 40 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -40 }} transition={{ duration: 0.3 }}>
-            <SkillView
-              skill={selectedSkill}
-              dept={selectedDept}
-              onBack={() => setSelectedSkill(null)}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      </div>
 
       {/* ─── Footer ─── */}
       <footer className="border-t border-white/5 py-6 text-center text-[10px] text-white/20">
         Powered by GreenPulse &middot; Green Skills Intelligence Platform
       </footer>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   ORG OVERVIEW — Department nodes + org stats
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-function OrgOverview({ companyName, departments, allSkills, orgStats, onSelectDept }: {
-  companyName: string;
-  departments: Department[];
-  allSkills: GreenSkill[];
-  orgStats: { total: number; crit: number; mod: number; ready: number; readiness: number };
-  onSelectDept: (d: Department) => void;
-}) {
-  const topRisks = useMemo(() => getTopPrioritySkills(allSkills, 5, departments), [allSkills, departments]);
-  const complianceRisks = useMemo(() => getComplianceRiskSkills(allSkills), [allSkills]);
-  const sectors = useMemo(() => getAllSectors(), []);
-
-  return (
-    <div className="max-w-7xl mx-auto px-6 py-8">
-      {/* Hero section */}
-      <div className="mb-10">
-        <h2 className="text-3xl font-bold mb-2 bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">
-          Green Skills Gap Audit
-        </h2>
-        <p className="text-white/40 text-sm max-w-2xl">
-          Comprehensive assessment of {companyName}&apos;s green skills readiness across {departments.length} departments
-          and {orgStats.total} individual skill competencies.
-        </p>
-      </div>
-
-      {/* Org KPIs */}
-      <div className="grid grid-cols-4 gap-4 mb-10">
-        <KPICard label="Readiness Score" value={`${orgStats.readiness}%`} color={orgStats.readiness >= 50 ? "#22c55e" : orgStats.readiness >= 25 ? "#f59e0b" : "#ef4444"} />
-        <KPICard label="Critical Gaps" value={`${orgStats.crit}`} color="#ef4444" sub={`${orgStats.total > 0 ? Math.round((orgStats.crit / orgStats.total) * 100) : 0}% of skills`} />
-        <KPICard label="Moderate Gaps" value={`${orgStats.mod}`} color="#f59e0b" sub={`${orgStats.total > 0 ? Math.round((orgStats.mod / orgStats.total) * 100) : 0}% of skills`} />
-        <KPICard label="Skills Ready" value={`${orgStats.ready}`} color="#22c55e" sub={`${orgStats.total > 0 ? Math.round((orgStats.ready / orgStats.total) * 100) : 0}% of skills`} />
-      </div>
-
-      {/* Gap Distribution Bar */}
-      <div className="mb-10">
-        <div className="flex items-center gap-3 mb-2 text-xs text-white/40">
-          <span>Organisation Gap Distribution</span>
-        </div>
-        <div className="flex h-3 rounded-full overflow-hidden bg-white/5">
-          {orgStats.total > 0 && (
-            <>
-              <div className="bg-red-500 transition-all" style={{ width: `${(orgStats.crit / orgStats.total) * 100}%` }} />
-              <div className="bg-amber-500 transition-all" style={{ width: `${(orgStats.mod / orgStats.total) * 100}%` }} />
-              <div className="bg-green-500 transition-all" style={{ width: `${(orgStats.ready / orgStats.total) * 100}%` }} />
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Department Nodes */}
-      <div className="mb-10">
-        <h3 className="text-lg font-semibold mb-4 text-white/80">Departments</h3>
-        <p className="text-xs text-white/30 mb-4">Click a department to explore its green skills gap analysis</p>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-          {departments.map(dept => {
-            const ds = skillsForDept(allSkills, dept);
-            const crit = ds.filter(s => s.severity?.toLowerCase() === "critical").length;
-            const mod = ds.filter(s => s.severity?.toLowerCase() === "moderate").length;
-            const noGap = ds.filter(s => { const sv = s.severity?.toLowerCase(); return sv === "no gap" || sv === "none" || sv === "healthy"; }).length;
-            const readiness = ds.length > 0 ? Math.round((noGap / ds.length) * 100) : 0;
-            const nodeColor = crit > 0 ? "#ef4444" : mod > 0 ? "#f59e0b" : "#22c55e";
-            const label = dept.label || dept.department;
-
-            return (
-              <button
-                key={dept.id}
-                onClick={() => onSelectDept(dept)}
-                className="group relative bg-white/[0.03] hover:bg-white/[0.06] border border-white/5 hover:border-white/15 rounded-xl p-5 text-left transition-all duration-200 hover:scale-[1.02]"
-              >
-                {/* Glow */}
-                <div className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity" style={{ boxShadow: `inset 0 0 30px ${nodeColor}15` }} />
-
-                {/* Node circle */}
-                <div className="relative flex items-center justify-center w-16 h-16 mx-auto mb-3">
-                  <div className="absolute inset-0 rounded-full opacity-30" style={{ backgroundColor: nodeColor, filter: "blur(8px)" }} />
-                  <div className="relative w-14 h-14 rounded-full flex items-center justify-center border-2" style={{ backgroundColor: nodeColor + "20", borderColor: nodeColor + "60" }}>
-                    <span className="text-white font-bold text-lg">{readiness}%</span>
-                  </div>
-                </div>
-
-                <div className="text-center">
-                  <div className="text-white font-semibold text-sm mb-1.5">{label}</div>
-                  <div className="flex items-center justify-center gap-2 text-[10px]">
-                    {crit > 0 && <span className="text-red-400">{crit}C</span>}
-                    {mod > 0 && <span className="text-amber-400">{mod}M</span>}
-                    {noGap > 0 && <span className="text-green-400">{noGap}R</span>}
-                  </div>
-                  <div className="flex h-1.5 rounded-full overflow-hidden mt-2 bg-white/5">
-                    {ds.length > 0 && (
-                      <>
-                        {crit > 0 && <div className="bg-red-500" style={{ width: `${(crit / ds.length) * 100}%` }} />}
-                        {mod > 0 && <div className="bg-amber-500" style={{ width: `${(mod / ds.length) * 100}%` }} />}
-                        {noGap > 0 && <div className="bg-green-500" style={{ width: `${(noGap / ds.length) * 100}%` }} />}
-                      </>
-                    )}
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Top Priority Risks */}
-      {topRisks.length > 0 && (
-        <div className="mb-10">
-          <h3 className="text-lg font-semibold mb-4 text-white/80">Top Priority Risks</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {topRisks.map(({ skill, riskScore }, i) => (
-              <div key={i} className="bg-white/[0.03] border border-white/5 rounded-lg p-4">
-                <div className="flex items-start gap-2 mb-2">
-                  <div className="w-2 h-2 rounded-full mt-1.5 flex-shrink-0" style={{ backgroundColor: sevColor(skill.severity) }} />
-                  <div>
-                    <div className="text-white text-sm font-medium">{skill.green_skill}</div>
-                    <div className="text-white/30 text-[10px]">{skill.department} &middot; {skill.skill_family}</div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 text-[10px] mt-2">
-                  <span className={`px-1.5 py-0.5 rounded border ${sevBg(skill.severity)}`}>{skill.severity}</span>
-                  <span className="text-white/30">Gap: {skill.gap}</span>
-                  <span className="text-white/30">Risk: {riskScore.toFixed(2)}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Compliance Risks */}
-      {complianceRisks.length > 0 && (
-        <div className="mb-10">
-          <h3 className="text-lg font-semibold mb-4 text-red-400/80">Compliance Risk Flags</h3>
-          <div className="bg-red-500/[0.05] border border-red-500/10 rounded-xl p-5">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {complianceRisks.slice(0, 8).map((skill, i) => (
-                <div key={i} className="flex items-center gap-2 text-sm">
-                  <div className="w-1.5 h-1.5 rounded-full bg-red-500" />
-                  <span className="text-red-400/80 font-medium">{skill.green_skill}</span>
-                  <span className="text-white/20 text-[10px]">{skill.department}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Sector Context */}
-      {sectors.length > 0 && (
-        <div className="mb-10">
-          <h3 className="text-lg font-semibold mb-4 text-white/80">Sector Intelligence</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {sectors.map((sector, i) => (
-              <SectorCard key={i} sector={sector} />
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -432,7 +399,7 @@ function SectorCard({ sector }: { sector: ReturnType<typeof getAllSectors>[0] })
    DEPARTMENT VIEW — Skills as clickable nodes + context
    ═══════════════════════════════════════════════════════════════════════════ */
 
-function DeptView({ dept, skills, deptDir, deptActions, deptAssessments, priorityActions, sectorPriorities, expandedActions, setExpandedActions, onBack, onSelectSkill }: {
+function DeptView({ dept, skills, deptDir, deptActions, deptAssessments, priorityActions, sectorPriorities, expandedActions, setExpandedActions, onSelectSkill }: {
   dept: Department;
   skills: GreenSkill[];
   deptDir: DeptDirectoryData | null;
@@ -442,7 +409,6 @@ function DeptView({ dept, skills, deptDir, deptActions, deptAssessments, priorit
   sectorPriorities: Record<string, string>;
   expandedActions: Set<number>;
   setExpandedActions: (s: Set<number>) => void;
-  onBack: () => void;
   onSelectSkill: (s: GreenSkill) => void;
 }) {
   const label = dept.label || dept.department;
@@ -466,13 +432,7 @@ function DeptView({ dept, skills, deptDir, deptActions, deptAssessments, priorit
   const [activeSection, setActiveSection] = useState<string>("skills");
 
   return (
-    <div className="max-w-7xl mx-auto px-6 py-8">
-      {/* Back + breadcrumb */}
-      <button onClick={onBack} className="flex items-center gap-2 text-white/40 hover:text-white/70 text-sm mb-6 transition-colors">
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-        All Departments
-      </button>
-
+    <div className="max-w-7xl mx-auto px-6 py-8 border-t border-white/5">
       {/* Dept header */}
       <div className="flex items-start gap-6 mb-8">
         {/* Node */}
@@ -602,7 +562,6 @@ function DeptView({ dept, skills, deptDir, deptActions, deptAssessments, priorit
       {/* Actions section */}
       {activeSection === "actions" && (
         <div className="space-y-3">
-          {/* Priority actions first */}
           {priorityActions.length > 0 && (
             <div className="mb-6">
               <h4 className="text-xs uppercase tracking-wider text-white/30 mb-3">Priority Actions (by risk score)</h4>
@@ -620,7 +579,6 @@ function DeptView({ dept, skills, deptDir, deptActions, deptAssessments, priorit
             </div>
           )}
 
-          {/* All GSIP actions */}
           <h4 className="text-xs uppercase tracking-wider text-white/30 mb-3">Development Actions (from GSIP)</h4>
           {deptActions.map((action, i) => (
             <div key={i} className="bg-white/[0.03] border border-white/5 rounded-lg overflow-hidden">
@@ -703,7 +661,6 @@ function SkillView({ skill, dept, onBack }: {
     value: Number((skill as any)[col]) || 0,
   })).filter(f => f.value > 0).sort((a, b) => b.value - a.value);
 
-  // Find matching GSIP action
   const deptLabel = dept?.label || dept?.department || skill.department;
   const actions = getDeptActions(deptLabel).filter(a =>
     a.greenSkill.toLowerCase().includes(skill.green_skill.toLowerCase()) ||
@@ -714,7 +671,7 @@ function SkillView({ skill, dept, onBack }: {
   );
 
   return (
-    <div className="max-w-4xl mx-auto px-6 py-8">
+    <div className="max-w-4xl mx-auto px-6 py-8 border-t border-white/5">
       {/* Back */}
       <button onClick={onBack} className="flex items-center gap-2 text-white/40 hover:text-white/70 text-sm mb-6 transition-colors">
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
