@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Department,
@@ -13,6 +13,8 @@ import {
   fetchDepartments,
   fetchEdges,
   fetchAllSkills,
+  fetchCompanyDepartmentScores,
+  fetchCompanySkillGaps,
 } from "@/lib/queries";
 import { skillsForDept } from "@/lib/utils";
 import NetworkGraph from "@/components/NetworkGraph";
@@ -22,9 +24,20 @@ import SkillDetailDrawer from "@/components/SkillDetailDrawer";
 import KPISidebar from "@/components/KPISidebar";
 import Breadcrumbs from "@/components/Breadcrumbs";
 import { useSearchParams } from "next/navigation";
-import { fetchCompanyDepartmentScores, fetchCompanySkillGaps } from "@/lib/queries";
 
 export default function Home() {
+  return (
+    <Suspense fallback={
+      <div className="h-screen w-screen flex items-center justify-center bg-[#0a0a1a]">
+        <p className="text-white/60 text-sm">Loading GreenPulse...</p>
+      </div>
+    }>
+      <HomeContent />
+    </Suspense>
+  );
+}
+
+function HomeContent() {
   // Data state
   const [departments, setDepartments] = useState<Department[]>([]);
   const [edges, setEdges] = useState<DepartmentEdge[]>([]);
@@ -46,46 +59,10 @@ export default function Home() {
   const startX = useRef(0);
   const startWidth = useRef(320);
 
-  
+
   // Inside the component:
   const searchParams = useSearchParams();
   const companyId = searchParams.get("company_id");
-  
-  // Replace the loadData useEffect with:
-  useEffect(() => {
-  async function loadData() {
-  try {
-  setLoading(true);
-  if (companyId) {
-  // Company-specific view (post-assessment)
-  const [depts, edgesData, skills] = await Promise.all([
-  fetchCompanyDepartmentScores(companyId),
-  fetchEdges(),
-  fetchCompanySkillGaps(companyId),
-  ]);
-  setDepartments(depts);
-  setEdges(edgesData);
-  setAllSkills(skills);
-  } else {
-  // Static/demo view (original behavior)
-  const [depts, edgesData, skills] = await Promise.all([
-  fetchDepartments(),
-  fetchEdges(),
-  fetchAllSkills(),
-  ]);
-  setDepartments(depts);
-  setEdges(edgesData);
-  setAllSkills(skills);
-  }
-  } catch (err) {
-  console.error("Failed to load data:", err);
-  setError("Failed to connect to database.");
-  } finally {
-  setLoading(false);
-  }
-  }
-  loadData();
-  }, [companyId]);
   
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -123,12 +100,78 @@ export default function Home() {
     async function loadData() {
       try {
         setLoading(true);
-        const [depts, edgesData, skills] = await Promise.all([
-          fetchDepartments(),
-          fetchEdges(),
-          fetchAllSkills(),
-        ]);
-        setDepartments(depts);
+        let depts: Department[];
+        let edgesData: DepartmentEdge[];
+        let skills: GreenSkill[];
+
+        if (companyId) {
+          [depts, edgesData, skills] = await Promise.all([
+            fetchCompanyDepartmentScores(companyId),
+            fetchEdges(),
+            fetchCompanySkillGaps(companyId),
+          ]);
+        } else {
+          [depts, edgesData, skills] = await Promise.all([
+            fetchDepartments(),
+            fetchEdges(),
+            fetchAllSkills(),
+          ]);
+        }
+
+        // Enrich departments with opt_* averages computed from skills data
+        // (handles case where departments table may not have opt_* columns)
+        const optColumns = [
+          "opt_carbon_footprint", "opt_renewable_energy", "opt_hvac",
+          "opt_office_space", "opt_remote_work", "opt_work_schedule",
+          "opt_water_use", "opt_digital_footprint", "opt_ai_compute",
+          "opt_iot_telemetry", "opt_hardware_circularity",
+          "opt_supply_chain_emissions", "opt_logistics_shipping",
+          "opt_fleet_electrification", "opt_employee_commuting", "opt_material_waste",
+        ] as const;
+
+        const enrichedDepts = depts.map(dept => {
+          // Find skills for this department
+          const deptSkills = skills.filter(
+            s => s.department === dept.id || s.department === dept.department
+          );
+          if (deptSkills.length === 0) return dept;
+
+          // Check if dept already has real opt_* values
+          const hasOpt = optColumns.some(c => {
+            const v = Number((dept as any)[c]);
+            return !isNaN(v) && v > 0;
+          });
+          if (hasOpt) return dept;
+
+          // Average each opt_* column from skills
+          const enriched = { ...dept };
+          for (const col of optColumns) {
+            const vals = deptSkills
+              .map(s => Number((s as any)[col]))
+              .filter(v => !isNaN(v));
+            (enriched as any)[col] = vals.length > 0
+              ? vals.reduce((a, b) => a + b, 0) / vals.length
+              : 0;
+          }
+
+          // Also recompute gap counts from skills data
+          enriched.critical_gap_count = deptSkills.filter(s => s.severity?.toLowerCase() === "critical").length;
+          enriched.moderate_gap_count = deptSkills.filter(s => s.severity?.toLowerCase() === "moderate").length;
+          enriched.no_gap_count = deptSkills.filter(s => {
+            const sev = s.severity?.toLowerCase();
+            return sev === "no gap" || sev === "none" || sev === "healthy";
+          }).length;
+
+          // Recompute overall_score as readiness percentage
+          const total = deptSkills.length;
+          enriched.overall_score = total > 0
+            ? Math.round((enriched.no_gap_count / total) * 100)
+            : 0;
+
+          return enriched;
+        });
+
+        setDepartments(enrichedDepts);
         setEdges(edgesData);
         setAllSkills(skills);
       } catch (err) {
@@ -141,7 +184,7 @@ export default function Home() {
       }
     }
     loadData();
-  }, []);
+  }, [companyId]);
 
   // Handle department click
   const handleDeptClick = useCallback(
