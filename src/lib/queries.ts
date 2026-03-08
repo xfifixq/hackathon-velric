@@ -5,10 +5,39 @@ export async function fetchDepartments(): Promise<Department[]> {
   const { data, error } = await supabase
     .from("departments")
     .select("*")
-    .order("id");
+    .order("department");
 
   if (error) throw error;
-  return data as Department[];
+  // Map to Department shape (departments table has department, label; no id)
+  return (data || []).map((d: { department: string; label?: string }) => ({
+    id: d.department.toLowerCase().replace(/[^a-z0-9]/g, "_"),
+    label: d.label || d.department,
+    department: d.department,
+    overall_score: 0,
+    gap_severity: "Low",
+    critical_gap_count: 0,
+    moderate_gap_count: 0,
+    no_gap_count: 12,
+    top_gaps: "",
+    desired_knowledge: "",
+    priority_level: "Low",
+    opt_carbon_footprint: 0,
+    opt_renewable_energy: 0,
+    opt_hvac: 0,
+    opt_office_space: 0,
+    opt_remote_work: 0,
+    opt_work_schedule: 0,
+    opt_water_use: 0,
+    opt_digital_footprint: 0,
+    opt_ai_compute: 0,
+    opt_iot_telemetry: 0,
+    opt_hardware_circularity: 0,
+    opt_supply_chain_emissions: 0,
+    opt_logistics_shipping: 0,
+    opt_fleet_electrification: 0,
+    opt_employee_commuting: 0,
+    opt_material_waste: 0,
+  })) as Department[];
 }
 
 export async function fetchDepartment(id: string): Promise<Department | null> {
