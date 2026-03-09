@@ -2,7 +2,8 @@
 
 import React, { useState, useCallback } from "react";
 import { Department, GreenSkill, ViewLevel } from "@/lib/types";
-import { getSkillSeverityColor, formatScore, OPT_COLUMNS, formatOptLabel, computeAvgOpt, optScoreColor, skillsForDept } from "@/lib/utils";
+import { getSkillSeverityColor, GSIP_PILLARS, computeAvgOpt, optScoreColor, skillsForDept, readinessColor } from "@/lib/utils";
+import { skillReadiness, departmentReadinessFromPillars } from "@/data/arsenalPillars";
 import { getTopPrioritySkills, getQuickWins, getComplianceRiskSkills, computeSkillRiskScore, getMaturityLabel, computeDeptRiskScore, getPriorityActions } from "@/lib/gapAnalysis";
 import { motion, AnimatePresence } from "framer-motion";
 import MethodologyModal from "./MethodologyModal";
@@ -30,7 +31,6 @@ function exportCSV(departments: Department[], skills: GreenSkill[]) {
     "Current Level", "Required Level", "Gap", "Severity",
     "Priority", "Current Maturity", "Required Maturity", "Risk Score",
     "Description", "Why It Matters",
-    ...OPT_COLUMNS.map(c => formatOptLabel(c)),
   ];
   const rows = skills.map(s => [
     s.department, s.skill_family, s.green_skill, s.theme,
@@ -38,22 +38,17 @@ function exportCSV(departments: Department[], skills: GreenSkill[]) {
     s.priority_level, getMaturityLabel(s.current_level), getMaturityLabel(s.required_level),
     (computeSkillRiskScore(s) * 100).toFixed(0) + "%",
     s.description || "", s.why_it_matters || "",
-    ...OPT_COLUMNS.map(c => Number((s as any)[c]) || 0),
   ].map(csvCell));
 
   const deptHeaders = [
     "Department", "Overall Score", "Gap Severity", "Priority", "Risk Score",
     "Critical Gaps", "Moderate Gaps", "No Gap",
-    "Avg Opt Score",
-    ...OPT_COLUMNS.map(c => formatOptLabel(c)),
     "Desired Knowledge", "Top Gaps",
   ];
   const deptRows = departments.map(d => [
     d.label, d.overall_score, d.gap_severity, d.priority_level,
     (computeDeptRiskScore(d, skills) * 100).toFixed(0) + "%",
     d.critical_gap_count, d.moderate_gap_count, d.no_gap_count,
-    (computeAvgOpt(d) * 100).toFixed(0) + "%",
-    ...OPT_COLUMNS.map(c => ((Number((d as any)[c]) || 0) * 100).toFixed(0) + "%"),
     d.desired_knowledge || "", d.top_gaps || "",
   ].map(csvCell));
 
@@ -92,7 +87,11 @@ export default function KPISidebar({ departments, allSkills, selectedDept, curre
     return sev === "no gap" || sev === "none" || sev === "healthy";
   }).length;
   const totalSkills = allSkills.length;
-  const readiness = totalSkills > 0 ? ((totalNoGap / totalSkills) * 100).toFixed(0) : "0";
+  const pillarIds = GSIP_PILLARS.map((p) => p.id);
+  // Org readiness = avg of dept readiness (parent = avg of children)
+  const readiness = departments.length > 0
+    ? Math.round(departments.reduce((sum, d) => sum + departmentReadinessFromPillars(skillsForDept(allSkills, d), pillarIds).pct, 0) / departments.length).toString()
+    : "0";
   const avgOptAll = departments.length > 0
     ? (departments.reduce((s, d) => s + computeAvgOpt(d), 0) / departments.length * 100).toFixed(0)
     : "0";
@@ -147,11 +146,8 @@ export default function KPISidebar({ departments, allSkills, selectedDept, curre
   const quickWins = getQuickWins(allSkills, departments);
   const complianceRisks = getComplianceRiskSkills(allSkills);
 
-  const selectedDeptFactors = selectedDept
-    ? OPT_COLUMNS.map((col) => ({
-        label: formatOptLabel(col),
-        val: Number((selectedDept as any)[col]) || 0,
-      })).sort((a, b) => b.val - a.val)
+  const selectedDeptPillars = selectedDept
+    ? GSIP_PILLARS.map((p) => ({ label: p.label, description: p.description }))
     : [];
 
   const handleExport = useCallback(() => {
@@ -278,11 +274,10 @@ export default function KPISidebar({ departments, allSkills, selectedDept, curre
               <div className="text-[9px] uppercase tracking-wider text-white/30 mb-2">All Departments</div>
               <div className="space-y-1">
                 {sortedDepts.map((dept) => {
+                  const ds = skillsForDept(allSkills, dept);
+                  const { pct: readiness, color } = departmentReadinessFromPillars(ds, pillarIds);
                   const gc = deptGapCounts.get(dept.id) || { critical: 0, moderate: 0, noGap: 0 };
                   const total = gc.critical + gc.moderate + gc.noGap;
-                  const readiness = total > 0 ? Math.round((gc.noGap / total) * 100) : 0;
-                  // Color based on gap severity — consistent with network graph nodes
-                  const color = gc.critical > 0 ? "#ef4444" : gc.moderate > 0 ? "#f59e0b" : "#22c55e";
                   return (
                     <div key={dept.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white/[0.02] border border-transparent">
                       <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color, boxShadow: `0 0 4px ${color}66` }} />
@@ -422,7 +417,7 @@ export default function KPISidebar({ departments, allSkills, selectedDept, curre
             {/* Department risk ranking */}
             <div>
               <div className="text-[9px] uppercase tracking-wider text-white/30 mb-1">Department Risk Ranking</div>
-              <p className="text-[9px] text-white/40 mb-2">Departments ranked by weighted risk score factoring gap severity, opt impact, and priority.</p>
+              <p className="text-[9px] text-white/40 mb-2">Departments ranked by weighted risk score factoring gap severity and priority.</p>
               <div className="space-y-1">
                 {[...departments]
                   .map(d => ({ dept: d, risk: computeDeptRiskScore(d, allSkills) }))
@@ -522,20 +517,12 @@ export default function KPISidebar({ departments, allSkills, selectedDept, curre
               )}
 
               <div className="px-5 py-3 border-b border-white/5">
-                <div className="text-[9px] uppercase tracking-wider text-white/30 mb-2">Optimization Factors</div>
+                <div className="text-[9px] uppercase tracking-wider text-white/30 mb-2">Arsenal GSIP Pillars</div>
                 <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                  {selectedDeptFactors.slice(0, 8).map((f) => (
-                    <div key={f.label}>
-                      <div className="flex justify-between text-[10px] mb-0.5">
-                        <span className="text-white/50">{f.label}</span>
-                        <span className="text-white/70 font-mono">{formatScore(f.val)}</span>
-                      </div>
-                      <div className="h-1 bg-white/5 rounded-full overflow-hidden">
-                        <div className="h-full rounded-full transition-all" style={{
-                          width: `${f.val * 100}%`,
-                          backgroundColor: optScoreColor(f.val),
-                        }} />
-                      </div>
+                  {selectedDeptPillars.slice(0, 8).map((f) => (
+                    <div key={f.label} className="text-[10px]">
+                      <span className="text-white/70 font-medium">{f.label}</span>
+                      <p className="text-white/40 text-[9px] mt-0.5 line-clamp-2">{f.description}</p>
                     </div>
                   ))}
                 </div>

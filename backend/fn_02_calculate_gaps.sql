@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS company_skill_gaps (
   current_level     INT,
   gap               INT,
   severity          TEXT,
-  -- optimization factors copied from green_skills for easy querying
+  -- legacy columns (kept for schema compat; risk uses Arsenal GSIP pillars baseline)
   opt_carbon_footprint     NUMERIC(5,2),
   opt_renewable_energy     NUMERIC(5,2),
   opt_hvac                 NUMERIC(5,2),
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS company_skill_gaps (
   opt_fleet_electrification NUMERIC(5,2),
   opt_employee_commuting   NUMERIC(5,2),
   opt_material_waste       NUMERIC(5,2),
-  -- weighted risk score (gap × avg optimization relevance)
+  -- weighted risk score (gap × sustainability baseline)
   risk_score        NUMERIC(5,2),
   calculated_at     TIMESTAMPTZ DEFAULT now(),
   UNIQUE(company_id, department, green_skill)
@@ -188,26 +188,8 @@ BEGIN
         ELSE 'No Gap'
       END;
 
-      -- Calculate risk_score = gap × average optimization factor relevance
-      v_opt_avg := (
-        COALESCE(v_skill.opt_carbon_footprint, 0) +
-        COALESCE(v_skill.opt_renewable_energy, 0) +
-        COALESCE(v_skill.opt_hvac, 0) +
-        COALESCE(v_skill.opt_office_space, 0) +
-        COALESCE(v_skill.opt_remote_work, 0) +
-        COALESCE(v_skill.opt_work_schedule, 0) +
-        COALESCE(v_skill.opt_water_use, 0) +
-        COALESCE(v_skill.opt_digital_footprint, 0) +
-        COALESCE(v_skill.opt_ai_compute, 0) +
-        COALESCE(v_skill.opt_iot_telemetry, 0) +
-        COALESCE(v_skill.opt_hardware_circularity, 0) +
-        COALESCE(v_skill.opt_supply_chain_emissions, 0) +
-        COALESCE(v_skill.opt_logistics_shipping, 0) +
-        COALESCE(v_skill.opt_fleet_electrification, 0) +
-        COALESCE(v_skill.opt_employee_commuting, 0) +
-        COALESCE(v_skill.opt_material_waste, 0)
-      ) / 16.0;
-
+      -- Risk score: gap × sustainability baseline (Arsenal GSIP pillars)
+      v_opt_avg := 0.5;
       v_risk := ROUND(GREATEST(v_gap, 0) * v_opt_avg, 2);
 
       -- Insert skill gap result

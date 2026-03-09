@@ -3,7 +3,8 @@
 import React, { useRef, useEffect, useCallback, useState, useMemo } from "react";
 import * as d3 from "d3";
 import { Department, DepartmentEdge, GreenSkill, SkillFamily } from "@/lib/types";
-import { getSeverityGlowColor, getSkillSeverityColor, OPT_COLUMNS, formatOptLabel, formatScore, computeAvgOpt, optScoreColor } from "@/lib/utils";
+import { getSeverityGlowColor, getSkillSeverityColor, GSIP_PILLARS, formatPillarLabel, formatScore, computeAvgOpt, optScoreColor, readinessColor } from "@/lib/utils";
+import { assignSkillsToPillars, skillReadiness, departmentReadinessFromPillars } from "@/data/arsenalPillars";
 import {
   getDeptDirectoryData, getPriorityActions, getMaturityLabel, MATURITY_LEVELS,
   getDeptAssessments, getAllSectors, getDeptSectorPriorities, getDeptSkillsMap,
@@ -43,6 +44,8 @@ interface GraphNode extends d3.SimulationNodeDatum {
   skillFamily?: string;
   greenSkillName?: string;
   skillOptValue?: number;
+  currentLevel?: number;
+  requiredLevel?: number;
 }
 
 /** Map a 0-1 opt value to severity + color */
@@ -110,7 +113,12 @@ export default function SkillFamilyGraph({ department, skills, edges, allDepartm
     const sv = s.severity?.toLowerCase();
     return sv === "no gap" || sv === "none" || sv === "healthy";
   }).length, [skills]);
-  const readinessPct = useMemo(() => skills.length > 0 ? Math.round((noGapCount / skills.length) * 100) : 0, [skills, noGapCount]);
+  // Hub % = avg of pillar % = avg of all skill readiness (current/required × 100)
+  const readinessPct = useMemo(() => {
+    if (skills.length === 0) return 0;
+    const sum = skills.reduce((acc, s) => acc + skillReadiness(s), 0);
+    return Math.round(sum / skills.length);
+  }, [skills]);
 
   const directoryData = useMemo(() => getDeptDirectoryData(deptLabel), [deptLabel]);
   const priorityActions = useMemo(() => getPriorityActions(department, skills), [department, skills]);
@@ -129,8 +137,8 @@ export default function SkillFamilyGraph({ department, skills, edges, allDepartm
     });
   };
 
-  // Build optimisation-metric-centric graph:
-  //   Hub (dept, avg opt score) → 16 opt metric nodes (G/A/R) → leaf skills that contribute
+  // Build sustainability-pillar-centric graph:
+  //   Hub (dept) → Arsenal GSIP pillar nodes → leaf skills (assigned by theme)
   const buildGraph = useCallback(() => {
     if (!svgRef.current) return;
     const svg = d3.select(svgRef.current);
@@ -138,99 +146,79 @@ export default function SkillFamilyGraph({ department, skills, edges, allDepartm
     const width = svgRef.current.clientWidth;
     const height = svgRef.current.clientHeight;
 
-    // ── Compute department gap severity from actual skills ──
     const deptAvgOpt = computeAvgOpt(department);
-    // Hub color from gap severity — matches NetworkGraph
-    const hubColor = critCount > 0 ? "#ef4444" : modCount > 0 ? "#f59e0b" : "#22c55e";
+    const pillarIds = GSIP_PILLARS.map((p) => p.id);
+
+    // Create pillar nodes (sub-nodes from Arsenal's public sustainability framework)
+    const optNodes: GraphNode[] = pillarIds.map((pillarId) => ({
+      id: `pillar-${pillarId}`,
+      label: formatPillarLabel(pillarId),
+      kind: "opt" as NodeKind,
+      color: "#6b7280",
+      radius: 22,
+      optKey: pillarId,
+      optValue: 0.5,
+      optSeverity: "unknown",
+      childCount: 0,
+    }));
+
+    // ── Assign skills to pillars (shared logic with audit) ──
+    const pillarToSkills = assignSkillsToPillars(skills, pillarIds);
+    const leafNodes: GraphNode[] = [];
+    const optChildCounts: Record<string, number> = {};
+
+    pillarIds.forEach((pillarId) => {
+      const pillarSkills = pillarToSkills[pillarId] || [];
+      optChildCounts[`pillar-${pillarId}`] = pillarSkills.length;
+      pillarSkills.forEach((s, idx) => {
+        const optId = `pillar-${pillarId}`;
+        const leafPct = skillReadiness(s);
+        leafNodes.push({
+          id: `leaf-${pillarId}-${idx}`,
+          label: s.green_skill,
+          kind: "leaf",
+          color: readinessColor(leafPct),
+          radius: 10,
+          parentId: optId,
+          severity: s.severity,
+          gap: s.gap,
+          skillFamily: s.skill_family,
+          greenSkillName: s.green_skill,
+          skillOptValue: 0.5,
+          currentLevel: s.current_level,
+          requiredLevel: s.required_level,
+        });
+      });
+    });
+
+    // Pillar: % = avg of children, color = worst child (green parent => all children green)
+    optNodes.forEach(on => {
+      on.childCount = optChildCounts[on.id] || 0;
+      const children = leafNodes.filter(ln => ln.parentId === on.id);
+      if (children.length === 0) {
+        on.color = "#6b7280"; // gray — no children
+        on.optSeverity = "none";
+      } else {
+        const childPcts = children.map(c => skillReadiness({ current_level: (c as any).currentLevel, required_level: (c as any).requiredLevel, gap: (c as any).gap } as GreenSkill));
+        const avgPct = Math.round(childPcts.reduce((a, b) => a + b, 0) / childPcts.length);
+        const minPct = Math.min(...childPcts);
+        on.color = readinessColor(minPct); // color from worst child
+        on.optSeverity = minPct >= 75 ? "healthy" : minPct >= 25 ? "moderate" : "critical";
+      }
+    });
+
+    // Hub: % = avg of pillar %, color = worst pillar (green => all children green)
+    const pillarPcts = optNodes.filter(on => (on.childCount ?? 0) > 0).map(on => {
+      const children = leafNodes.filter(ln => ln.parentId === on.id);
+      return children.reduce((sum, c) => sum + skillReadiness({ current_level: (c as any).currentLevel, required_level: (c as any).requiredLevel, gap: (c as any).gap } as GreenSkill), 0) / children.length;
+    });
+    const hubReadinessPct = pillarPcts.length > 0 ? Math.round(pillarPcts.reduce((a, b) => a + b, 0) / pillarPcts.length) : 0;
+    const hubMinPct = pillarPcts.length > 0 ? Math.min(...pillarPcts) : 0;
+    const hubColor = readinessColor(hubMinPct); // color from worst pillar
     const hubNode: GraphNode = {
       id: "hub", label: deptLabel, kind: "hub",
       color: hubColor, radius: 44, avgOptScore: deptAvgOpt,
     };
-
-    // ── Only show opt metrics that have a non-zero dept value ──
-    const activeOptCols = OPT_COLUMNS.filter(col => (Number((department as any)[col]) || 0) > 0);
-    // Fallback: if no opt columns are non-zero, show all of them
-    const displayCols = activeOptCols.length > 0 ? activeOptCols : [...OPT_COLUMNS];
-
-    // Create opt nodes first with placeholder color — will be updated after leaf assignment
-    const optNodes: GraphNode[] = displayCols.map((col) => {
-      const val = Number((department as any)[col]) || 0;
-      return {
-        id: `opt-${col}`, label: formatOptLabel(col), kind: "opt" as NodeKind,
-        color: "#6b7280", radius: 22, optKey: col, optValue: val, optSeverity: "unknown",
-        childCount: 0,
-      };
-    });
-
-    // ── Assign each skill to one opt metric node ──
-    // Strategy: for each skill, pick the opt metric where the skill's own
-    // opt_* value is highest. If all skill-level values are 0, assign each
-    // skill round-robin across the active opt metrics so all skills are visible.
-    const leafNodes: GraphNode[] = [];
-    const optChildCounts: Record<string, number> = {};
-
-    // Check if ANY skill has a non-zero opt value at skill level
-    const anySkillHasOpt = skills.some(s =>
-      displayCols.some(col => Number((s as any)[col]) > 0)
-    );
-
-    if (anySkillHasOpt) {
-      // Assign skill to its best-matching opt metric
-      skills.forEach((s) => {
-        let bestCol = displayCols[0];
-        let bestVal = -1;
-        for (const col of displayCols) {
-          const v = Number((s as any)[col]) || 0;
-          if (v > bestVal) { bestVal = v; bestCol = col; }
-        }
-        const optId = `opt-${bestCol}`;
-        const idx = optChildCounts[optId] || 0;
-        optChildCounts[optId] = idx + 1;
-        leafNodes.push({
-          id: `leaf-${bestCol}-${idx}`, label: s.green_skill, kind: "leaf",
-          color: getSkillSeverityColor(s.severity), radius: 10,
-          parentId: optId, severity: s.severity, gap: s.gap,
-          skillFamily: s.skill_family, greenSkillName: s.green_skill,
-          skillOptValue: bestVal,
-        });
-      });
-    } else {
-      // Skill-level opt values are all 0 — distribute skills round-robin
-      skills.forEach((s, i) => {
-        const col = displayCols[i % displayCols.length];
-        const optId = `opt-${col}`;
-        const idx = optChildCounts[optId] || 0;
-        optChildCounts[optId] = idx + 1;
-        leafNodes.push({
-          id: `leaf-${col}-${idx}`, label: s.green_skill, kind: "leaf",
-          color: getSkillSeverityColor(s.severity), radius: 10,
-          parentId: optId, severity: s.severity, gap: s.gap,
-          skillFamily: s.skill_family, greenSkillName: s.green_skill,
-          skillOptValue: Number((department as any)[col]) || 0,
-        });
-      });
-    }
-
-    // Update child counts and derive opt node colors from their child leaf severities
-    optNodes.forEach(on => {
-      on.childCount = optChildCounts[on.id] || 0;
-      const children = leafNodes.filter(ln => ln.parentId === on.id);
-      const cCrit = children.filter(c => c.severity?.toLowerCase() === "critical").length;
-      const cMod = children.filter(c => c.severity?.toLowerCase() === "moderate").length;
-      if (children.length === 0) {
-        on.color = "#6b7280"; // gray — no children
-        on.optSeverity = "none";
-      } else if (cCrit > 0) {
-        on.color = "#ef4444"; // red — has critical children
-        on.optSeverity = "critical";
-      } else if (cMod > 0) {
-        on.color = "#f59e0b"; // amber — moderate children only
-        on.optSeverity = "moderate";
-      } else {
-        on.color = "#22c55e"; // green — all children healthy
-        on.optSeverity = "healthy";
-      }
-    });
 
     // Store for tooltip access
     leafNodesRef.current = leafNodes;
@@ -288,11 +276,11 @@ export default function SkillFamilyGraph({ department, skills, edges, allDepartm
     const hubCircle = container.append("circle")
       .attr("r", hubNode.radius).attr("fill", hubNode.color).attr("opacity", 0.9)
       .attr("stroke", "rgba(255,255,255,0.25)").attr("stroke-width", 2).attr("filter", "url(#sf-glow-filter)");
-    // Hub text: readiness % (matching NetworkGraph)
+    // Hub text: avg of pillar % (parent derives from children)
     const hubMainText = container.append("text")
       .attr("text-anchor", "middle").attr("dy", "-0.3em").attr("fill", "white")
       .attr("font-size", "14px").attr("font-weight", "700").style("pointer-events", "none")
-      .text(`${readinessPct}%`);
+      .text(`${hubReadinessPct}%`);
     const hubSubText = container.append("text")
       .attr("text-anchor", "middle").attr("dy", "1em").attr("fill", "rgba(255,255,255,0.45)")
       .attr("font-size", "7px").style("pointer-events", "none").text("readiness");
@@ -318,19 +306,21 @@ export default function SkillFamilyGraph({ department, skills, edges, allDepartm
         d3.select(this).attr("opacity", 0.9).attr("stroke-width", 1.5).attr("stroke", "rgba(255,255,255,0.15)");
         setTooltip(null);
       })
-      .on("click", (_, d) => { setActiveTab("factors"); setDrawerOpen(true); });
+      .on("click", () => { setActiveTab("factors"); setDrawerOpen(true); });
 
-    // Opt node inner text: show child readiness
+    // Opt node inner text: avg readiness of sub-nodes (current/required × 100)
     const optInnerText = container.append("g").selectAll("text").data(optNodes).enter().append("text")
       .attr("text-anchor", "middle").attr("dy", "0.35em").attr("fill", "white")
       .attr("font-size", "9px").attr("font-weight", "700").style("pointer-events", "none")
       .text((d) => {
         const children = leafNodes.filter(ln => ln.parentId === d.id);
-        const noGap = children.filter(c => {
-          const sv = c.severity?.toLowerCase();
-          return sv === "no gap" || sv === "none" || sv === "healthy";
-        }).length;
-        return children.length > 0 ? `${Math.round((noGap / children.length) * 100)}%` : "—";
+        if (children.length === 0) return "—";
+        const sum = children.reduce((acc, c) => {
+          const req = c.requiredLevel ?? 4;
+          const curr = req - (c.gap ?? 0);
+          return acc + (req > 0 ? (curr / req) * 100 : 0);
+        }, 0);
+        return `${Math.round(sum / children.length)}%`;
       });
 
     // Opt label below node
@@ -366,8 +356,11 @@ export default function SkillFamilyGraph({ department, skills, edges, allDepartm
       .attr("fill", (d) => d.color).attr("font-size", "6px").attr("font-weight", "500")
       .style("pointer-events", "none").attr("opacity", 0.7)
       .text((d) => {
-        const name = d.greenSkillName || d.label;
-        return name.length > 14 ? name.slice(0, 12) + "…" : name;
+        const req = d.requiredLevel ?? 4;
+        const curr = req - (d.gap ?? 0);
+        const pct = req > 0 ? Math.round((curr / req) * 100) : 0;
+        const name = (d.greenSkillName || d.label).slice(0, 10);
+        return `${name}${name.length >= 10 ? "…" : ""} ${pct}%`;
       });
 
     // ── Force simulation ──
@@ -421,16 +414,19 @@ export default function SkillFamilyGraph({ department, skills, edges, allDepartm
     leafNodeGroup.call(leafDrag);
 
     return () => { simulation.stop(); };
-  }, [department, skills, deptLabel, critCount, modCount, noGapCount, readinessPct]);
+  }, [department, skills, deptLabel, critCount, modCount, noGapCount]);
 
   useEffect(() => { const cleanup = buildGraph(); return () => { cleanup?.(); }; }, [buildGraph]);
 
   const deptAvgOpt = computeAvgOpt(department);
-  const sevColor = critCount > 0 ? "#ef4444" : modCount > 0 ? "#f59e0b" : "#22c55e";
+  const hubReadinessPct = useMemo(() => departmentReadinessFromPillars(skills, GSIP_PILLARS.map(p => p.id)).pct, [skills]);
+  const sevColor = readinessColor(hubReadinessPct);
 
-  const optFactors = OPT_COLUMNS.map((col) => ({
-    key: col, label: formatOptLabel(col), value: Number((department as any)[col]) || 0,
-  })).sort((a, b) => b.value - a.value);
+  const pillarFactors = GSIP_PILLARS.map((p) => ({
+    key: p.id,
+    label: p.label,
+    description: p.description,
+  }));
 
   const connectedDepts = edges
     .filter(e => e.source === department.id || e.target === department.id)
@@ -448,7 +444,7 @@ export default function SkillFamilyGraph({ department, skills, edges, allDepartm
     { key: "maturity", label: "Maturity Map" },
     { key: "assessments", label: "Assessment" },
     { key: "sectors", label: "Sector Intel" },
-    { key: "factors", label: "Opt Factors" },
+    { key: "factors", label: "GSIP Pillars" },
     { key: "connections", label: "Connections" },
   ];
 
@@ -470,11 +466,11 @@ export default function SkillFamilyGraph({ department, skills, edges, allDepartm
           {drawerOpen ? "Hide Panel" : "Show Panel"}
         </motion.button>
 
-        {/* Mini legend */}
+        {/* Mini legend — 0–25% red, 25–75% orange, 75–100% green */}
         <div className="absolute bottom-4 left-4 z-10 flex items-center gap-3 text-[9px] text-white/40 bg-[#0c0c24]/80 backdrop-blur-sm px-3 py-2 rounded-lg border border-white/5">
-          <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-green-500" /><span>Ready</span></div>
-          <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-amber-500" /><span>Moderate Gap</span></div>
-          <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-red-500" /><span>Critical Gap</span></div>
+          <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-green-500" /><span>75–100%</span></div>
+          <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-amber-500" /><span>25–75%</span></div>
+          <div className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-red-500" /><span>0–25%</span></div>
           <span className="text-white/20 mx-1">|</span>
           <span className="text-red-400">{critCount}C</span>
           <span className="text-amber-400">{modCount}M</span>
@@ -505,18 +501,7 @@ export default function SkillFamilyGraph({ department, skills, edges, allDepartm
                         {cMod > 0 && <span className="text-amber-400 font-medium">{cMod} moderate</span>}
                         {cOk > 0 && <span className="text-green-400 font-medium">{cOk} ready</span>}
                       </div>
-                      <div className="mt-1.5 flex items-center gap-2">
-                        <span className="text-[9px] text-white/30">Opt impact</span>
-                        <div className="flex-1 h-2 bg-white/10 rounded-full overflow-hidden">
-                          <div className="h-full rounded-full bg-blue-400" style={{
-                            width: `${(tooltip.node.optValue || 0) * 100}%`,
-                          }} />
-                        </div>
-                        <span className="text-[10px] font-mono text-blue-400">
-                          {((tooltip.node.optValue || 0) * 100).toFixed(0)}%
-                        </span>
-                      </div>
-                      <div className="text-[9px] text-white/25 mt-1">{tooltip.node.childCount} skill{tooltip.node.childCount !== 1 ? "s" : ""} · Click to view factors</div>
+                      <div className="text-[9px] text-white/25 mt-1">{tooltip.node.childCount} skill{tooltip.node.childCount !== 1 ? "s" : ""} · Click to view GSIP pillars</div>
                     </>
                   );
                 })()
@@ -531,9 +516,6 @@ export default function SkillFamilyGraph({ department, skills, edges, allDepartm
                     <span className="text-white/40">Gap: {tooltip.node.gap ?? "—"}</span>
                     <span className="text-white/40">{tooltip.node.skillFamily}</span>
                   </div>
-                  {tooltip.node.skillOptValue !== undefined && (
-                    <div className="text-[10px] text-white/40 mt-1">Metric contribution: {(tooltip.node.skillOptValue * 100).toFixed(0)}%</div>
-                  )}
                 </>
               )}
             </motion.div>
@@ -1068,22 +1050,23 @@ export default function SkillFamilyGraph({ department, skills, edges, allDepartm
                 </div>
               )}
 
-              {/* ═══ OPT FACTORS ═══ */}
+              {/* ═══ ARSENAL GSIP PILLARS ═══ */}
               {activeTab === "factors" && (
                 <div className="space-y-2">
-                  <p className="text-[10px] text-white/40 mb-2">16 sustainability optimisation factors — higher = more impact potential.</p>
-                  {optFactors.map((f) => (
-                    <div key={f.key}>
-                      <div className="flex justify-between text-[10px] mb-0.5">
-                        <span className="text-white/60">{f.label}</span>
-                        <span className="text-white/80 font-mono">{formatScore(f.value)}</span>
-                      </div>
-                      <div className="h-2 bg-white/5 rounded-full overflow-hidden">
-                        <div className="h-full rounded-full transition-all" style={{
-                          width: `${f.value * 100}%`,
-                          backgroundColor: f.value >= 0.4 ? "#22c55e" : f.value >= 0.2 ? "#f59e0b" : "#ef4444",
-                        }} />
-                      </div>
+                  <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 mb-3">
+                    <div className="text-[9px] uppercase tracking-wider text-blue-400/80 mb-1.5">How percentages are calculated (repeatable)</div>
+                    <ol className="text-[9px] text-white/60 space-y-1 list-decimal list-inside">
+                      <li><strong className="text-white/70">Leaf (skill)</strong>: (current_level ÷ required_level) × 100</li>
+                      <li><strong className="text-white/70">Pillar</strong>: average of its leaf skills&apos; %</li>
+                      <li><strong className="text-white/70">Hub (dept)</strong>: average of all pillar % = average of all skill %</li>
+                    </ol>
+                    <p className="text-[8px] text-white/40 mt-1.5">Data: current_level, required_level, gap from DB. current = required − gap.</p>
+                  </div>
+                  <p className="text-[10px] text-white/40 mb-2">Arsenal FC sustainability pillars — from their public framework (arsenal.com/sustainability).</p>
+                  {pillarFactors.map((f) => (
+                    <div key={f.key} className="bg-white/[0.03] rounded-lg p-2 border border-white/5">
+                      <div className="text-[10px] font-medium text-white/80 mb-1">{f.label}</div>
+                      <div className="text-[9px] text-white/50 leading-relaxed">{f.description}</div>
                     </div>
                   ))}
                 </div>

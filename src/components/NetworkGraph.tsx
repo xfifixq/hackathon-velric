@@ -3,7 +3,8 @@
 import React, { useRef, useEffect, useCallback, useState } from "react";
 import * as d3 from "d3";
 import { Department, DepartmentEdge, GreenSkill } from "@/lib/types";
-import { computeAvgOpt, optScoreColor, skillsForDept, getSeverityGlowColor } from "@/lib/utils";
+import { computeAvgOpt, optScoreColor, skillsForDept, getSeverityGlowColor, GSIP_PILLARS } from "@/lib/utils";
+import { departmentReadinessFromPillars } from "@/data/arsenalPillars";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface NetworkGraphProps {
@@ -44,7 +45,7 @@ export default function NetworkGraph({ departments, edges, allSkills, onNodeClic
     const width = svgRef.current.clientWidth;
     const height = svgRef.current.clientHeight;
 
-    // Compute gap counts from actual skill data
+    // Gap counts for label display (critical/moderate/ready)
     const gapCountMap = new Map<string, { critical: number; moderate: number; noGap: number }>();
     for (const dept of departments) {
       const ds = skillsForDept(allSkills, dept);
@@ -58,21 +59,11 @@ export default function NetworkGraph({ departments, edges, allSkills, onNodeClic
       });
     }
 
+    const pillarIds = GSIP_PILLARS.map((p) => p.id);
     const nodes: SimNode[] = departments.map((dept) => {
-      // Color based on gap severity so it aligns with sub-node colors
-      const gc = gapCountMap.get(dept.id) || { critical: 0, moderate: 0, noGap: 0 };
-      const total = gc.critical + gc.moderate + gc.noGap;
-      let color: string;
-      if (gc.critical > 0) {
-        color = "#ef4444"; // red — has critical gaps
-      } else if (gc.moderate > 0) {
-        color = "#f59e0b"; // amber — moderate gaps only
-      } else {
-        color = "#22c55e"; // green — no gaps
-      }
-      // Compute readiness % for display inside node
-      const readinessPct = total > 0 ? Math.round((gc.noGap / total) * 100) : 0;
-      return { id: dept.id, dept, color, radius: 32, readinessPct };
+      const ds = skillsForDept(allSkills, dept);
+      const { pct, color } = departmentReadinessFromPillars(ds, pillarIds);
+      return { id: dept.id, dept, color, radius: 32, readinessPct: pct };
     });
     const nodeMap = new Map(nodes.map((n) => [n.id, n]));
 
@@ -218,7 +209,7 @@ export default function NetworkGraph({ departments, edges, allSkills, onNodeClic
               </span>
             </div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-white/60">
-              <div>Readiness: <span className="text-white font-medium">{(() => { const ds = skillsForDept(allSkills, tooltip.dept); const ng = ds.filter(s => { const sv = s.severity?.toLowerCase(); return sv === "no gap" || sv === "none" || sv === "healthy"; }).length; return ds.length > 0 ? Math.round((ng / ds.length) * 100) : 0; })()}%</span></div>
+              <div>Readiness: <span className="text-white font-medium">{departmentReadinessFromPillars(skillsForDept(allSkills, tooltip.dept), GSIP_PILLARS.map(p => p.id)).pct}%</span></div>
               <div>Priority: <span className="text-white font-medium">{tooltip.dept.priority_level}</span></div>
               <div>Critical Gaps: <span className="text-red-400 font-medium">{skillsForDept(allSkills, tooltip.dept).filter(s => s.severity?.toLowerCase() === "critical").length}</span></div>
               <div>Moderate Gaps: <span className="text-amber-400 font-medium">{skillsForDept(allSkills, tooltip.dept).filter(s => s.severity?.toLowerCase() === "moderate").length}</span></div>

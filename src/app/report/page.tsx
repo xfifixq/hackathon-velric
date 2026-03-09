@@ -7,12 +7,13 @@ import {
   fetchDepartments, fetchEdges, fetchAllSkills,
   fetchCompanyDepartmentScores, fetchCompanySkillGaps,
 } from "@/lib/queries";
-import { computeAvgOpt, OPT_COLUMNS, formatOptLabel, skillsForDept } from "@/lib/utils";
+import { computeAvgOpt, GSIP_PILLARS, skillsForDept } from "@/lib/utils";
 import {
   getTopPrioritySkills, getQuickWins, getComplianceRiskSkills,
   computeSkillRiskScore, computeDeptRiskScore, getMaturityLabel,
 } from "@/lib/gapAnalysis";
 import gsipData from "@/data/gsipData.json";
+import { skillReadiness, departmentReadinessFromPillars } from "@/data/arsenalPillars";
 
 export default function ReportPage() {
   return (
@@ -48,18 +49,10 @@ function ReportContent() {
             fetchDepartments(), fetchEdges(), fetchAllSkills(),
           ]);
         }
-        // Enrich dept opt from skills
-        const optCols = OPT_COLUMNS;
         const enriched = depts.map(dept => {
           const ds = skills.filter(s => s.department === dept.id || s.department === dept.department);
           if (ds.length === 0) return dept;
-          const hasOpt = optCols.some(c => { const v = Number((dept as any)[c]); return !isNaN(v) && v > 0; });
-          if (hasOpt) return dept;
           const e = { ...dept };
-          for (const col of optCols) {
-            const vals = ds.map(s => Number((s as any)[col])).filter(v => !isNaN(v));
-            (e as any)[col] = vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
-          }
           e.critical_gap_count = ds.filter(s => s.severity?.toLowerCase() === "critical").length;
           e.moderate_gap_count = ds.filter(s => s.severity?.toLowerCase() === "moderate").length;
           e.no_gap_count = ds.filter(s => { const sv = s.severity?.toLowerCase(); return sv === "no gap" || sv === "none" || sv === "healthy"; }).length;
@@ -84,17 +77,18 @@ function ReportContent() {
   const totalCritical = allSkills.filter(s => s.severity?.toLowerCase() === "critical").length;
   const totalModerate = allSkills.filter(s => s.severity?.toLowerCase() === "moderate").length;
   const totalNoGap = allSkills.filter(s => { const sv = s.severity?.toLowerCase(); return sv === "no gap" || sv === "none" || sv === "healthy"; }).length;
-  const readiness = totalSkills > 0 ? Math.round((totalNoGap / totalSkills) * 100) : 0;
+  const pillarIds = GSIP_PILLARS.map((p) => p.id);
+  // Org readiness = avg of dept readiness (parent = avg of children)
+  const readiness = departments.length > 0
+    ? Math.round(departments.reduce((sum, d) => sum + departmentReadinessFromPillars(skillsForDept(allSkills, d), pillarIds).pct, 0) / departments.length)
+    : 0;
 
   const topPriority = getTopPrioritySkills(allSkills, 10, departments);
   const quickWins = getQuickWins(allSkills, departments);
   const complianceRisks = getComplianceRiskSkills(allSkills);
 
-  // Org-wide opt averages
-  const orgOpts = OPT_COLUMNS.map(col => {
-    const avg = allSkills.reduce((s, sk) => s + (Number((sk as any)[col]) || 0), 0) / (totalSkills || 1);
-    return { col, label: formatOptLabel(col), avg };
-  }).sort((a, b) => b.avg - a.avg);
+  // Arsenal GSIP pillars for display
+  const orgPillars = GSIP_PILLARS.map(p => ({ id: p.id, label: p.label, description: p.description }));
 
   // Department summaries
   const deptSummaries = departments.map(dept => {
@@ -103,10 +97,10 @@ function ReportContent() {
     const moderate = ds.filter(s => s.severity?.toLowerCase() === "moderate").length;
     const noGap = ds.filter(s => { const sv = s.severity?.toLowerCase(); return sv === "no gap" || sv === "none" || sv === "healthy"; }).length;
     const total = ds.length;
-    const r = total > 0 ? Math.round((noGap / total) * 100) : 0;
+    const { pct: r, color: deptCol } = departmentReadinessFromPillars(ds, pillarIds);
     const risk = computeDeptRiskScore(dept, allSkills);
     const overview = (gsipData.overview as Record<string, any>)[dept.department] || {};
-    return { dept, skills: ds, critical, moderate, noGap, total, readiness: r, risk, overview };
+    return { dept, skills: ds, critical, moderate, noGap, total, readiness: r, color: deptCol, risk, overview };
   }).sort((a, b) => b.risk - a.risk);
 
   // Themes breakdown
@@ -126,9 +120,6 @@ function ReportContent() {
       default: return "#22c55e";
     }
   };
-
-  const deptColor = (critical: number, moderate: number) =>
-    critical > 0 ? "#ef4444" : moderate > 0 ? "#f59e0b" : "#22c55e";
 
   return (
     <div className="bg-white text-gray-900 min-h-screen print:bg-white">
@@ -212,8 +203,7 @@ function ReportContent() {
 
           {/* Static node visualization */}
           <div className="grid grid-cols-5 gap-4 mb-8">
-            {deptSummaries.map(({ dept, critical, moderate, noGap, total, readiness: r }) => {
-              const color = deptColor(critical, moderate);
+            {deptSummaries.map(({ dept, critical, moderate, noGap, total, readiness: r, color }) => {
               return (
                 <div key={dept.id} className="text-center">
                   <div
@@ -247,12 +237,12 @@ function ReportContent() {
         <section>
           <h2 className="text-2xl font-bold mb-4">Department Analysis</h2>
           <div className="space-y-4">
-            {deptSummaries.map(({ dept, skills, critical, moderate, noGap, total, readiness: r, risk, overview }) => (
+            {deptSummaries.map(({ dept, skills, critical, moderate, noGap, total, readiness: r, color, risk, overview }) => (
               <div key={dept.id} className="border border-gray-200 rounded-xl p-5 break-inside-avoid">
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full flex items-center justify-center text-white text-xs font-bold"
-                      style={{ backgroundColor: deptColor(critical, moderate) }}>
+                      style={{ backgroundColor: color }}>
                       {r}%
                     </div>
                     <div>
@@ -264,7 +254,7 @@ function ReportContent() {
                   </div>
                   <div className="text-right">
                     <span className="text-xs px-2 py-1 rounded-full font-medium"
-                      style={{ backgroundColor: deptColor(critical, moderate) + "15", color: deptColor(critical, moderate) }}>
+                      style={{ backgroundColor: color + "15", color }}>
                       Risk: {(risk * 100).toFixed(0)}%
                     </span>
                   </div>
@@ -314,23 +304,15 @@ function ReportContent() {
           </div>
         </section>
 
-        {/* Optimization Factors */}
+        {/* Arsenal GSIP Sustainability Pillars */}
         <section className="break-before-page">
-          <h2 className="text-2xl font-bold mb-4">Sustainability Optimization Factors</h2>
-          <p className="text-gray-500 text-sm mb-4">Organisation-wide impact scores showing which sustainability levers are most significant.</p>
+          <h2 className="text-2xl font-bold mb-4">Arsenal GSIP Sustainability Pillars</h2>
+          <p className="text-gray-500 text-sm mb-4">From Arsenal FC&apos;s public sustainability framework (arsenal.com/sustainability).</p>
           <div className="grid grid-cols-2 gap-3">
-            {orgOpts.map(({ label, avg }) => (
-              <div key={label} className="flex items-center gap-3 px-3 py-2 bg-gray-50 rounded-lg">
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs font-medium text-gray-700">{label}</div>
-                  <div className="h-2 bg-gray-200 rounded-full mt-1 overflow-hidden">
-                    <div className="h-full rounded-full transition-all"
-                      style={{ width: `${avg * 100}%`, backgroundColor: avg >= 0.4 ? "#22c55e" : avg >= 0.2 ? "#f59e0b" : "#ef4444" }} />
-                  </div>
-                </div>
-                <span className="text-sm font-bold font-mono" style={{ color: avg >= 0.4 ? "#22c55e" : avg >= 0.2 ? "#f59e0b" : "#ef4444" }}>
-                  {(avg * 100).toFixed(0)}%
-                </span>
+            {orgPillars.map(({ id, label, description }) => (
+              <div key={id} className="px-3 py-2 bg-gray-50 rounded-lg">
+                <div className="text-xs font-medium text-gray-700">{label}</div>
+                <div className="text-[11px] text-gray-500 mt-1">{description}</div>
               </div>
             ))}
           </div>
@@ -339,7 +321,7 @@ function ReportContent() {
         {/* Priority Actions */}
         <section className="break-before-page">
           <h2 className="text-2xl font-bold mb-4">Top Priority Actions</h2>
-          <p className="text-gray-500 text-sm mb-4">Ranked by risk score — combining gap severity, sustainability impact, and priority level.</p>
+          <p className="text-gray-500 text-sm mb-4">Ranked by risk score — combining gap severity and priority level.</p>
           <div className="space-y-2">
             {topPriority.map(({ skill, riskScore }, i) => (
               <div key={skill.id} className="flex items-center gap-3 px-4 py-3 bg-gray-50 rounded-lg border border-gray-100">
@@ -365,7 +347,7 @@ function ReportContent() {
         {quickWins.length > 0 && (
           <section>
             <h2 className="text-2xl font-bold mb-4">Quick Wins</h2>
-            <p className="text-gray-500 text-sm mb-4">Moderate gaps with high optimization impact — easiest to close with significant sustainability benefit.</p>
+            <p className="text-gray-500 text-sm mb-4">Moderate gaps — easiest to close with significant sustainability benefit.</p>
             <div className="grid grid-cols-1 gap-2">
               {quickWins.map((skill) => (
                 <div key={skill.id} className="flex items-center gap-3 px-4 py-3 bg-amber-50 rounded-lg border border-amber-100">

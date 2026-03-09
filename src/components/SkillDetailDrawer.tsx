@@ -7,10 +7,9 @@ import {
   computeAvgOpt,
   getOptColor,
   getSkillSeverityColor,
-  OPT_COLUMNS,
-  formatOptLabel,
+  GSIP_PILLARS,
 } from "@/lib/utils";
-import OptRadarChart from "./OptRadarChart";
+import { getPillarsForTheme } from "@/data/arsenalPillars";
 
 interface SkillDetailDrawerProps {
   skill: GreenSkill;
@@ -29,17 +28,10 @@ export default function SkillDetailDrawer({
       ? (skill.current_level / skill.required_level) * 100
       : 0;
 
-  // Radar data
-  const radarData = OPT_COLUMNS.map((col) => ({
-    factor: formatOptLabel(col),
-    value: Number(skill[col]) || 0,
-    fullMark: 1,
-  }));
-
-  // Top optimization factors
-  const topFactors = [...radarData]
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 5);
+  // Relevant Arsenal GSIP pillars for this skill (based on theme)
+  const relevantPillars = getPillarsForTheme(skill.theme || "")
+    .map((id) => GSIP_PILLARS.find((p) => p.id === id))
+    .filter((p): p is NonNullable<typeof p> => !!p);
 
   return (
     <motion.div
@@ -199,44 +191,19 @@ export default function SkillDetailDrawer({
           </div>
         )}
 
-        {/* Radar Chart */}
-        <div className="px-6 py-4 border-b border-white/5">
-          <div className="text-[10px] uppercase tracking-wider text-white/40 mb-3">
-            Optimization Factor Profile
-          </div>
-          <div className="h-72 -mx-2">
-            <OptRadarChart data={radarData} color={glowColor} />
-          </div>
-        </div>
-
-        {/* Top Factors */}
+        {/* Arsenal GSIP Pillars (relevant to this skill) */}
         <div className="px-6 py-4">
           <div className="text-[10px] uppercase tracking-wider text-white/40 mb-3">
-            Top Impact Factors
+            Related Sustainability Pillars
           </div>
+          <p className="text-[10px] text-white/50 mb-3">
+            Arsenal FC sustainability framework — from arsenal.com/sustainability
+          </p>
           <div className="space-y-2">
-            {topFactors.map((f) => (
-              <div key={f.factor} className="flex items-center gap-3">
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs text-white/70 truncate">
-                    {f.factor}
-                  </div>
-                  <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden mt-1">
-                    <div
-                      className="h-full rounded-full"
-                      style={{
-                        width: `${f.value * 100}%`,
-                        backgroundColor: glowColor,
-                      }}
-                    />
-                  </div>
-                </div>
-                <span
-                  className="text-xs font-mono min-w-[35px] text-right"
-                  style={{ color: glowColor }}
-                >
-                  {(f.value * 100).toFixed(0)}%
-                </span>
+            {(relevantPillars.length > 0 ? relevantPillars : GSIP_PILLARS).map((p) => (
+              <div key={p.id} className="bg-white/[0.03] rounded-lg p-3 border border-white/5">
+                <div className="text-xs font-medium text-white/80 mb-1">{p.label}</div>
+                <div className="text-[10px] text-white/50 leading-relaxed">{p.description}</div>
               </div>
             ))}
           </div>

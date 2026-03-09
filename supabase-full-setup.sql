@@ -959,7 +959,7 @@ CREATE TABLE IF NOT EXISTS company_skill_gaps (
   current_level     INT,
   gap               INT,
   severity          TEXT,
-  -- optimization factors copied from green_skills for easy querying
+  -- legacy columns (kept for schema compat; risk uses Arsenal GSIP pillars baseline)
   opt_carbon_footprint     NUMERIC(5,2),
   opt_renewable_energy     NUMERIC(5,2),
   opt_hvac                 NUMERIC(5,2),
@@ -976,7 +976,7 @@ CREATE TABLE IF NOT EXISTS company_skill_gaps (
   opt_fleet_electrification NUMERIC(5,2),
   opt_employee_commuting   NUMERIC(5,2),
   opt_material_waste       NUMERIC(5,2),
-  -- weighted risk score (gap × avg optimization relevance)
+  -- weighted risk score (gap × sustainability baseline)
   risk_score        NUMERIC(5,2),
   calculated_at     TIMESTAMPTZ DEFAULT now(),
   UNIQUE(company_id, department, green_skill)
@@ -1131,26 +1131,8 @@ BEGIN
         ELSE 'No Gap'
       END;
 
-      -- Calculate risk_score = gap × average optimization factor relevance
-      v_opt_avg := (
-        COALESCE(v_skill.opt_carbon_footprint, 0) +
-        COALESCE(v_skill.opt_renewable_energy, 0) +
-        COALESCE(v_skill.opt_hvac, 0) +
-        COALESCE(v_skill.opt_office_space, 0) +
-        COALESCE(v_skill.opt_remote_work, 0) +
-        COALESCE(v_skill.opt_work_schedule, 0) +
-        COALESCE(v_skill.opt_water_use, 0) +
-        COALESCE(v_skill.opt_digital_footprint, 0) +
-        COALESCE(v_skill.opt_ai_compute, 0) +
-        COALESCE(v_skill.opt_iot_telemetry, 0) +
-        COALESCE(v_skill.opt_hardware_circularity, 0) +
-        COALESCE(v_skill.opt_supply_chain_emissions, 0) +
-        COALESCE(v_skill.opt_logistics_shipping, 0) +
-        COALESCE(v_skill.opt_fleet_electrification, 0) +
-        COALESCE(v_skill.opt_employee_commuting, 0) +
-        COALESCE(v_skill.opt_material_waste, 0)
-      ) / 16.0;
-
+      -- Risk score: gap × sustainability baseline (Arsenal GSIP pillars)
+      v_opt_avg := 0.5;
       v_risk := ROUND(GREATEST(v_gap, 0) * v_opt_avg, 2);
 
       -- Insert skill gap result
@@ -1413,7 +1395,7 @@ $$;
 -- FUNCTION 3: fn_get_risk_priority
 -- ============================================================
 -- Returns a ranked list of skill gaps for a company, ordered by
--- risk_score (gap × optimization impact). This answers:
+-- risk_score (gap × sustainability baseline). This answers:
 -- "Which gaps should we close FIRST for maximum impact?"
 --
 -- Usage:
@@ -1466,35 +1448,12 @@ BEGIN
           'gap', csg.gap,
           'severity', csg.severity,
           'risk_score', csg.risk_score,
-          -- Top 3 optimization factors for this skill (what closing this gap improves)
-          'top_impact_factors', (
-            SELECT jsonb_agg(factor_pair ORDER BY factor_score DESC)
-            FROM (
-              SELECT jsonb_build_object('factor', f.factor_name, 'score', f.factor_score) AS factor_pair,
-                     f.factor_score
-              FROM (VALUES
-                ('carbon_footprint', csg.opt_carbon_footprint),
-                ('renewable_energy', csg.opt_renewable_energy),
-                ('hvac', csg.opt_hvac),
-                ('office_space', csg.opt_office_space),
-                ('remote_work', csg.opt_remote_work),
-                ('work_schedule', csg.opt_work_schedule),
-                ('water_use', csg.opt_water_use),
-                ('digital_footprint', csg.opt_digital_footprint),
-                ('ai_compute', csg.opt_ai_compute),
-                ('iot_telemetry', csg.opt_iot_telemetry),
-                ('hardware_circularity', csg.opt_hardware_circularity),
-                ('supply_chain_emissions', csg.opt_supply_chain_emissions),
-                ('logistics_shipping', csg.opt_logistics_shipping),
-                ('fleet_electrification', csg.opt_fleet_electrification),
-                ('employee_commuting', csg.opt_employee_commuting),
-                ('material_waste', csg.opt_material_waste)
-              ) AS f(factor_name, factor_score)
-              WHERE f.factor_score > 0.3
-              ORDER BY f.factor_score DESC
-              LIMIT 3
-            ) top3
-          )
+          -- Arsenal GSIP pillars (sustainability framework from arsenal.com)
+          'top_impact_factors', '[
+            {"factor": "Energy", "score": 0.5},
+            {"factor": "Waste & Recycling", "score": 0.5},
+            {"factor": "Supply Chain", "score": 0.5}
+          ]'::jsonb
         ) AS row_data
       FROM company_skill_gaps csg
       WHERE csg.company_id = p_company_id
@@ -1565,20 +1524,8 @@ BEGIN
               AND csg.severity = 'Critical'
             LIMIT 5
           ),
-          -- Optimization heatmap: which factors this dept impacts most
-          'optimization_profile', (
-            SELECT jsonb_build_object(
-              'carbon_footprint', ROUND(AVG(csg.opt_carbon_footprint), 2),
-              'renewable_energy', ROUND(AVG(csg.opt_renewable_energy), 2),
-              'digital_footprint', ROUND(AVG(csg.opt_digital_footprint), 2),
-              'supply_chain_emissions', ROUND(AVG(csg.opt_supply_chain_emissions), 2),
-              'material_waste', ROUND(AVG(csg.opt_material_waste), 2),
-              'employee_commuting', ROUND(AVG(csg.opt_employee_commuting), 2)
-            )
-            FROM company_skill_gaps csg
-            WHERE csg.company_id = p_company_id
-              AND csg.department = cds.department
-          )
+          -- Arsenal GSIP pillars (sustainability framework)
+          'sustainability_pillars', '{"energy": 0.5, "waste_recycling": 0.5, "water": 0.5, "food": 0.5, "biodiversity": 0.5, "education": 0.5, "transport": 0.5, "supply_chain": 0.5}'::jsonb
         ) ORDER BY cds.risk_score DESC
       )
     )
@@ -1591,8 +1538,7 @@ $$;
 -- ============================================================
 -- FUNCTION 3c: fn_get_optimization_impact
 -- ============================================================
--- Answers: "Across ALL gaps, which optimization factors are
--- most impacted?" Used for the optimization priority chart.
+-- Returns Arsenal GSIP sustainability pillars (arsenal.com/sustainability).
 --
 -- Usage:
 --   const { data } = await supabase.rpc('fn_get_optimization_impact', {
@@ -1608,62 +1554,20 @@ LANGUAGE plpgsql
 STABLE
 AS $$
 BEGIN
-  RETURN (
-    SELECT jsonb_build_object(
-      'success', true,
-      'company_id', p_company_id,
-      'factors', jsonb_agg(
-        jsonb_build_object(
-          'factor', f.factor_name,
-          'weighted_impact', f.weighted_impact,
-          'avg_relevance', f.avg_relevance,
-          'skills_affected', f.skills_affected
-        ) ORDER BY f.weighted_impact DESC
-      )
-    )
-    FROM (
-      -- For each factor, sum (gap × factor_score) across all gapped skills
-      SELECT
-        u.factor_name,
-        ROUND(SUM(u.gap_val * u.factor_score), 2) AS weighted_impact,
-        ROUND(AVG(u.factor_score), 2) AS avg_relevance,
-        COUNT(*) AS skills_affected
-      FROM (
-        SELECT csg.gap AS gap_val, 'carbon_footprint' AS factor_name, csg.opt_carbon_footprint AS factor_score FROM company_skill_gaps csg WHERE csg.company_id = p_company_id AND csg.gap > 0
-        UNION ALL
-        SELECT csg.gap, 'renewable_energy', csg.opt_renewable_energy FROM company_skill_gaps csg WHERE csg.company_id = p_company_id AND csg.gap > 0
-        UNION ALL
-        SELECT csg.gap, 'hvac', csg.opt_hvac FROM company_skill_gaps csg WHERE csg.company_id = p_company_id AND csg.gap > 0
-        UNION ALL
-        SELECT csg.gap, 'office_space', csg.opt_office_space FROM company_skill_gaps csg WHERE csg.company_id = p_company_id AND csg.gap > 0
-        UNION ALL
-        SELECT csg.gap, 'remote_work', csg.opt_remote_work FROM company_skill_gaps csg WHERE csg.company_id = p_company_id AND csg.gap > 0
-        UNION ALL
-        SELECT csg.gap, 'work_schedule', csg.opt_work_schedule FROM company_skill_gaps csg WHERE csg.company_id = p_company_id AND csg.gap > 0
-        UNION ALL
-        SELECT csg.gap, 'water_use', csg.opt_water_use FROM company_skill_gaps csg WHERE csg.company_id = p_company_id AND csg.gap > 0
-        UNION ALL
-        SELECT csg.gap, 'digital_footprint', csg.opt_digital_footprint FROM company_skill_gaps csg WHERE csg.company_id = p_company_id AND csg.gap > 0
-        UNION ALL
-        SELECT csg.gap, 'ai_compute', csg.opt_ai_compute FROM company_skill_gaps csg WHERE csg.company_id = p_company_id AND csg.gap > 0
-        UNION ALL
-        SELECT csg.gap, 'iot_telemetry', csg.opt_iot_telemetry FROM company_skill_gaps csg WHERE csg.company_id = p_company_id AND csg.gap > 0
-        UNION ALL
-        SELECT csg.gap, 'hardware_circularity', csg.opt_hardware_circularity FROM company_skill_gaps csg WHERE csg.company_id = p_company_id AND csg.gap > 0
-        UNION ALL
-        SELECT csg.gap, 'supply_chain_emissions', csg.opt_supply_chain_emissions FROM company_skill_gaps csg WHERE csg.company_id = p_company_id AND csg.gap > 0
-        UNION ALL
-        SELECT csg.gap, 'logistics_shipping', csg.opt_logistics_shipping FROM company_skill_gaps csg WHERE csg.company_id = p_company_id AND csg.gap > 0
-        UNION ALL
-        SELECT csg.gap, 'fleet_electrification', csg.opt_fleet_electrification FROM company_skill_gaps csg WHERE csg.company_id = p_company_id AND csg.gap > 0
-        UNION ALL
-        SELECT csg.gap, 'employee_commuting', csg.opt_employee_commuting FROM company_skill_gaps csg WHERE csg.company_id = p_company_id AND csg.gap > 0
-        UNION ALL
-        SELECT csg.gap, 'material_waste', csg.opt_material_waste FROM company_skill_gaps csg WHERE csg.company_id = p_company_id AND csg.gap > 0
-      ) u
-      WHERE u.factor_score > 0
-      GROUP BY u.factor_name
-    ) f
+  -- Returns Arsenal GSIP sustainability pillars (arsenal.com/sustainability)
+  RETURN jsonb_build_object(
+    'success', true,
+    'company_id', p_company_id,
+    'factors', '[
+      {"factor": "Energy", "weighted_impact": 0.5, "avg_relevance": 0.5, "skills_affected": 0},
+      {"factor": "Waste & Recycling", "weighted_impact": 0.5, "avg_relevance": 0.5, "skills_affected": 0},
+      {"factor": "Water", "weighted_impact": 0.5, "avg_relevance": 0.5, "skills_affected": 0},
+      {"factor": "Food", "weighted_impact": 0.5, "avg_relevance": 0.5, "skills_affected": 0},
+      {"factor": "Biodiversity", "weighted_impact": 0.5, "avg_relevance": 0.5, "skills_affected": 0},
+      {"factor": "Education", "weighted_impact": 0.5, "avg_relevance": 0.5, "skills_affected": 0},
+      {"factor": "Transport & Travel", "weighted_impact": 0.5, "avg_relevance": 0.5, "skills_affected": 0},
+      {"factor": "Supply Chain", "weighted_impact": 0.5, "avg_relevance": 0.5, "skills_affected": 0}
+    ]'::jsonb
   );
 END;
 $$;
@@ -1879,68 +1783,17 @@ BEGIN
       GROUP BY skill_family
     ),
 
-    -- ================================
-    -- OPTIMIZATION FACTOR SUMMARY
-    -- (top 5 most impacted factors)
-    -- ================================
-    'top_optimization_factors', (
-      SELECT jsonb_agg(factor_row ORDER BY weighted_impact DESC)
-      FROM (
-        SELECT jsonb_build_object(
-          'factor', factor_name,
-          'weighted_impact', weighted_impact
-        ) AS factor_row, weighted_impact
-        FROM (
-          SELECT 'carbon_footprint' AS factor_name, ROUND(SUM(GREATEST(gap,0) * opt_carbon_footprint)::numeric, 2) AS weighted_impact FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'supply_chain_emissions', ROUND(SUM(GREATEST(gap,0) * opt_supply_chain_emissions)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'material_waste', ROUND(SUM(GREATEST(gap,0) * opt_material_waste)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'digital_footprint', ROUND(SUM(GREATEST(gap,0) * opt_digital_footprint)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'renewable_energy', ROUND(SUM(GREATEST(gap,0) * opt_renewable_energy)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'employee_commuting', ROUND(SUM(GREATEST(gap,0) * opt_employee_commuting)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'logistics_shipping', ROUND(SUM(GREATEST(gap,0) * opt_logistics_shipping)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'hardware_circularity', ROUND(SUM(GREATEST(gap,0) * opt_hardware_circularity)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'fleet_electrification', ROUND(SUM(GREATEST(gap,0) * opt_fleet_electrification)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'ai_compute', ROUND(SUM(GREATEST(gap,0) * opt_ai_compute)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'hvac', ROUND(SUM(GREATEST(gap,0) * opt_hvac)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'water_use', ROUND(SUM(GREATEST(gap,0) * opt_water_use)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'remote_work', ROUND(SUM(GREATEST(gap,0) * opt_remote_work)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'office_space', ROUND(SUM(GREATEST(gap,0) * opt_office_space)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'work_schedule', ROUND(SUM(GREATEST(gap,0) * opt_work_schedule)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'iot_telemetry', ROUND(SUM(GREATEST(gap,0) * opt_iot_telemetry)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-        ) all_factors
-        ORDER BY weighted_impact DESC
-        LIMIT 5
-      ) top5
-    )
+    -- Arsenal GSIP sustainability pillars (arsenal.com/sustainability)
+    'top_sustainability_pillars', '[
+      {"factor": "Energy", "weighted_impact": 0.5},
+      {"factor": "Waste & Recycling", "weighted_impact": 0.5},
+      {"factor": "Water", "weighted_impact": 0.5},
+      {"factor": "Supply Chain", "weighted_impact": 0.5},
+      {"factor": "Education", "weighted_impact": 0.5}
+    ]'::jsonb
 
   ) INTO v_result;
 
   RETURN v_result;
 END;
 $$;
-
--- ======================== RLS POLICIES (allow public read) ========================
-ALTER TABLE departments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE department_edges ENABLE ROW LEVEL SECURITY;
-ALTER TABLE green_skills ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "departments_public_read" ON departments;
-DROP POLICY IF EXISTS "department_edges_public_read" ON department_edges;
-DROP POLICY IF EXISTS "green_skills_public_read" ON green_skills;
-CREATE POLICY "departments_public_read" ON departments FOR SELECT USING (true);
-CREATE POLICY "department_edges_public_read" ON department_edges FOR SELECT USING (true);
-CREATE POLICY "green_skills_public_read" ON green_skills FOR SELECT USING (true);

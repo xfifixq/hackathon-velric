@@ -1,62 +1,18 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { ARSENAL_GSIP_PILLARS } from "@/data/arsenalPillars";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export const OPT_COLUMNS = [
-  "opt_carbon_footprint",
-  "opt_renewable_energy",
-  "opt_hvac",
-  "opt_office_space",
-  "opt_remote_work",
-  "opt_work_schedule",
-  "opt_water_use",
-  "opt_digital_footprint",
-  "opt_ai_compute",
-  "opt_iot_telemetry",
-  "opt_hardware_circularity",
-  "opt_supply_chain_emissions",
-  "opt_logistics_shipping",
-  "opt_fleet_electrification",
-  "opt_employee_commuting",
-  "opt_material_waste",
-] as const;
+/** Arsenal GSIP sustainability pillars (from Arsenal's public framework) — used as sub-nodes */
+export const GSIP_PILLARS = ARSENAL_GSIP_PILLARS;
 
-export const OPT_LABELS: Record<string, string> = {
-  opt_carbon_footprint: "Carbon Footprint",
-  opt_renewable_energy: "Renewable Energy",
-  opt_hvac: "HVAC",
-  opt_office_space: "Office Space",
-  opt_remote_work: "Remote Work",
-  opt_work_schedule: "Work Schedule",
-  opt_water_use: "Water Use",
-  opt_digital_footprint: "Digital Footprint",
-  opt_ai_compute: "AI Compute",
-  opt_iot_telemetry: "IoT Telemetry",
-  opt_hardware_circularity: "Hardware Circularity",
-  opt_supply_chain_emissions: "Supply Chain Emissions",
-  opt_logistics_shipping: "Logistics & Shipping",
-  opt_fleet_electrification: "Fleet Electrification",
-  opt_employee_commuting: "Employee Commuting",
-  opt_material_waste: "Material Waste",
-};
-
-export type OptColumn = (typeof OPT_COLUMNS)[number];
-
+/** Baseline sustainability impact for risk scoring (replaces removed optimisation factors) */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function computeAvgOpt(row: any): number {
-  let sum = 0;
-  let count = 0;
-  for (const col of OPT_COLUMNS) {
-    const val = Number(row[col]);
-    if (!isNaN(val)) {
-      sum += val;
-      count++;
-    }
-  }
-  return count > 0 ? sum / count : 0;
+export function computeAvgOpt(_row?: any): number {
+  return 0.5;
 }
 
 /** Color based on gap_severity from the DB — this is the source of truth */
@@ -75,7 +31,14 @@ export function getSeverityGlowColor(severity: string): string {
   }
 }
 
-/** Color for skill-level severity */
+/** Color by readiness % — 0–25% red, 25–75% orange, 75–100% green. Every node follows this. */
+export function readinessColor(pct: number): string {
+  if (pct >= 75) return "#22c55e";
+  if (pct >= 25) return "#f59e0b";
+  return "#ef4444";
+}
+
+/** Color for skill-level severity (legacy — prefer readinessColor with skillReadiness for consistency) */
 export function getSkillSeverityColor(severity: string): string {
   switch (severity?.toLowerCase()) {
     case "critical":
@@ -97,8 +60,10 @@ export function getOptColor(avgOpt: number): string {
   return "#22c55e";
 }
 
-export function formatOptLabel(key: string): string {
-  return OPT_LABELS[key] || key.replace("opt_", "").replace(/_/g, " ");
+/** Format pillar id to display label */
+export function formatPillarLabel(pillarId: string): string {
+  const p = GSIP_PILLARS.find((x) => x.id === pillarId);
+  return p?.label || pillarId.replace(/_/g, " ");
 }
 
 export function formatScore(val: number | null | undefined): string {

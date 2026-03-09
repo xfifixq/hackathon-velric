@@ -8,7 +8,8 @@ import {
   fetchDepartments, fetchAllSkills, fetchEdges,
   fetchCompanyDepartmentScores, fetchCompanySkillGaps,
 } from "@/lib/queries";
-import { skillsForDept, OPT_COLUMNS, formatOptLabel, computeAvgOpt } from "@/lib/utils";
+import { skillsForDept, GSIP_PILLARS, computeAvgOpt, readinessColor } from "@/lib/utils";
+import { assignSkillsToPillars, skillReadiness, departmentReadinessFromPillars } from "@/data/arsenalPillars";
 import {
   getDeptDirectoryData, getDeptAssessments, getAllSectors,
   getDeptSectorPriorities, getDeptSkillsMap, getDeptActions,
@@ -76,17 +77,10 @@ function AuditContent() {
             fetchDepartments(), fetchEdges(), fetchAllSkills(),
           ]);
         }
-        // Enrich dept opt from skills
         const enriched = depts.map(dept => {
           const ds = skills.filter(s => s.department === dept.id || s.department === dept.department);
           if (ds.length === 0) return dept;
-          const hasOpt = OPT_COLUMNS.some(c => { const v = Number((dept as any)[c]); return !isNaN(v) && v > 0; });
-          if (hasOpt) return dept;
           const e = { ...dept };
-          for (const col of OPT_COLUMNS) {
-            const vals = ds.map(s => Number((s as any)[col])).filter(v => !isNaN(v));
-            (e as any)[col] = vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
-          }
           e.critical_gap_count = ds.filter(s => s.severity?.toLowerCase() === "critical").length;
           e.moderate_gap_count = ds.filter(s => s.severity?.toLowerCase() === "moderate").length;
           e.no_gap_count = ds.filter(s => { const sv = s.severity?.toLowerCase(); return sv === "no gap" || sv === "none" || sv === "healthy"; }).length;
@@ -107,15 +101,18 @@ function AuditContent() {
     load();
   }, [companyId]);
 
-  // Org-wide stats
+  // Org-wide stats — org readiness = avg of dept readiness (parent = avg of children)
   const orgStats = useMemo(() => {
     const total = allSkills.length;
     const crit = allSkills.filter(s => s.severity?.toLowerCase() === "critical").length;
     const mod = allSkills.filter(s => s.severity?.toLowerCase() === "moderate").length;
     const ready = allSkills.filter(s => { const sv = s.severity?.toLowerCase(); return sv === "no gap" || sv === "none" || sv === "healthy"; }).length;
-    const readiness = total > 0 ? Math.round((ready / total) * 100) : 0;
+    const pillarIds = GSIP_PILLARS.map((p) => p.id);
+    const readiness = departments.length > 0
+      ? Math.round(departments.reduce((sum, d) => sum + departmentReadinessFromPillars(skillsForDept(allSkills, d), pillarIds).pct, 0) / departments.length)
+      : 0;
     return { total, crit, mod, ready, readiness };
-  }, [allSkills]);
+  }, [allSkills, departments]);
 
   // Current dept skills
   const deptSkills = useMemo(() => {
@@ -197,7 +194,7 @@ function AuditContent() {
           </div>
           <div className="flex items-center gap-4 text-sm">
             <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: orgStats.readiness >= 50 ? "#22c55e" : orgStats.readiness >= 25 ? "#f59e0b" : "#ef4444" }} />
+              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: readinessColor(orgStats.readiness) }} />
               <span className="text-white/60">{orgStats.readiness}% Ready</span>
             </div>
             <span className="text-white/20">|</span>
@@ -220,7 +217,7 @@ function AuditContent() {
         </p>
 
         <div className="grid grid-cols-4 gap-4 mb-6">
-          <KPICard label="Readiness Score" value={`${orgStats.readiness}%`} color={orgStats.readiness >= 50 ? "#22c55e" : orgStats.readiness >= 25 ? "#f59e0b" : "#ef4444"} />
+          <KPICard label="Readiness Score" value={`${orgStats.readiness}%`} color={readinessColor(orgStats.readiness)} />
           <KPICard label="Critical Gaps" value={`${orgStats.crit}`} color="#ef4444" sub={`${orgStats.total > 0 ? Math.round((orgStats.crit / orgStats.total) * 100) : 0}% of skills`} />
           <KPICard label="Moderate Gaps" value={`${orgStats.mod}`} color="#f59e0b" sub={`${orgStats.total > 0 ? Math.round((orgStats.mod / orgStats.total) * 100) : 0}% of skills`} />
           <KPICard label="Skills Ready" value={`${orgStats.ready}`} color="#22c55e" sub={`${orgStats.total > 0 ? Math.round((orgStats.ready / orgStats.total) * 100) : 0}% of skills`} />
@@ -405,8 +402,9 @@ function DeptView({ dept, skills, deptDir, deptActions, deptAssessments, priorit
   const crit = skills.filter(s => s.severity?.toLowerCase() === "critical").length;
   const mod = skills.filter(s => s.severity?.toLowerCase() === "moderate").length;
   const noGap = skills.filter(s => { const sv = s.severity?.toLowerCase(); return sv === "no gap" || sv === "none" || sv === "healthy"; }).length;
-  const readiness = skills.length > 0 ? Math.round((noGap / skills.length) * 100) : 0;
-  const nodeColor = crit > 0 ? "#ef4444" : mod > 0 ? "#f59e0b" : "#22c55e";
+  // Dept readiness = avg of pillar %, color = worst pillar (green => all children green)
+  const pillarIds = GSIP_PILLARS.map((p) => p.id);
+  const { pct: readiness, color: nodeColor } = departmentReadinessFromPillars(skills, pillarIds);
 
   // Group by family
   const families = useMemo(() => {
@@ -420,6 +418,19 @@ function DeptView({ dept, skills, deptDir, deptActions, deptAssessments, priorit
   }, [skills]);
 
   const [activeSection, setActiveSection] = useState<string>("skills");
+
+  // Pillar readiness (matches SkillFamilyGraph - avg of sub-node readiness)
+  const pillarReadiness = useMemo(() => {
+    const pillarIds = GSIP_PILLARS.map((p) => p.id);
+    const assigned = assignSkillsToPillars(skills, pillarIds);
+    return pillarIds.map((pid) => {
+      const pillarSkills = assigned[pid] || [];
+      const pct = pillarSkills.length > 0
+        ? Math.round(pillarSkills.reduce((sum, s) => sum + skillReadiness(s), 0) / pillarSkills.length)
+        : null;
+      return { pillarId: pid, label: GSIP_PILLARS.find((p) => p.id === pid)!.label, pct, count: pillarSkills.length };
+    });
+  }, [skills]);
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-8 border-t border-white/5">
@@ -485,6 +496,33 @@ function DeptView({ dept, skills, deptDir, deptActions, deptAssessments, priorit
           ))}
         </div>
       )}
+
+      {/* Pillar Readiness (matches graph percentages) */}
+      <div className="mb-6">
+        <div className="text-[9px] uppercase tracking-wider text-white/30 mb-3">Arsenal GSIP Pillar Readiness</div>
+        <p className="text-white/40 text-[10px] mb-3">Avg of sub-node readiness (current/required × 100). Source: Arsenal GSIP Blueprint.</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {pillarReadiness.map(({ pillarId, label, pct, count }) => (
+            <div key={pillarId} className="bg-white/[0.03] border border-white/5 rounded-lg p-3">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-white/70 text-xs font-medium">{label}</span>
+                <span className={`text-sm font-bold ${pct !== null ? (pct >= 75 ? "text-green-400" : pct >= 25 ? "text-amber-400" : "text-red-400") : "text-white/30"}`}>
+                  {pct !== null ? `${pct}%` : "—"}
+                </span>
+              </div>
+              <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+                {pct !== null && (
+                  <div className="h-full rounded-full transition-all" style={{
+                    width: `${pct}%`,
+                    backgroundColor: readinessColor(pct),
+                  }} />
+                )}
+              </div>
+              <div className="text-[9px] text-white/25 mt-1">{count} skill{count !== 1 ? "s" : ""}</div>
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* Section tabs */}
       <div className="flex gap-1 mb-6 border-b border-white/5 pb-0">
@@ -646,10 +684,7 @@ function SkillView({ skill, dept, onBack }: {
   onBack: () => void;
 }) {
   const color = sevColor(skill.severity);
-  const optFactors = OPT_COLUMNS.map(col => ({
-    label: formatOptLabel(col),
-    value: Number((skill as any)[col]) || 0,
-  })).filter(f => f.value > 0).sort((a, b) => b.value - a.value);
+  const relevantPillars = GSIP_PILLARS; // Show all Arsenal pillars for context
 
   const deptLabel = dept?.label || dept?.department || skill.department;
   const actions = getDeptActions(deptLabel).filter(a =>
@@ -771,23 +806,19 @@ function SkillView({ skill, dept, onBack }: {
         </div>
       )}
 
-      {/* Sustainability Impact */}
-      {optFactors.length > 0 && (
-        <div className="mb-6">
-          <h4 className="text-xs uppercase tracking-wider text-white/30 mb-3">Sustainability Impact Factors</h4>
-          <div className="space-y-2">
-            {optFactors.slice(0, 8).map((f, i) => (
-              <div key={i} className="flex items-center gap-3">
-                <span className="text-white/40 text-xs w-40 truncate">{f.label}</span>
-                <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden">
-                  <div className="h-full rounded-full bg-blue-500/60" style={{ width: `${f.value * 100}%` }} />
-                </div>
-                <span className="text-white/30 text-[10px] font-mono w-10 text-right">{(f.value * 100).toFixed(0)}%</span>
-              </div>
-            ))}
-          </div>
+      {/* Arsenal GSIP Pillars */}
+      <div className="mb-6">
+        <h4 className="text-xs uppercase tracking-wider text-white/30 mb-3">Arsenal GSIP Sustainability Pillars</h4>
+        <p className="text-white/40 text-[10px] mb-2">From arsenal.com/sustainability</p>
+        <div className="space-y-2">
+          {relevantPillars.slice(0, 8).map((p) => (
+            <div key={p.id} className="bg-white/[0.03] rounded-lg p-3 border border-white/5">
+              <div className="text-white/70 text-xs font-medium">{p.label}</div>
+              <div className="text-white/40 text-[10px] mt-1">{p.description}</div>
+            </div>
+          ))}
         </div>
-      )}
+      </div>
     </div>
   );
 }

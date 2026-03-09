@@ -1,5 +1,5 @@
 import { Department, GreenSkill } from "./types";
-import { OPT_COLUMNS, computeAvgOpt, skillsForDept } from "./utils";
+import { computeAvgOpt, skillsForDept } from "./utils";
 import gsipData from "@/data/gsipData.json";
 
 // ─── Maturity Levels ────────────────────────────────────────────
@@ -19,7 +19,7 @@ export function getMaturityShort(level: number): string {
 }
 
 // ─── Risk Scoring ────────────────────────────────────────────────
-// Weighted risk score combining gap severity, opt factor impact, and priority
+// Weighted risk score combining gap severity, sustainability impact, and priority
 export function computeSkillRiskScore(skill: GreenSkill, deptOptFallback?: number): number {
   const gapWeight = skill.gap >= 2 ? 1.0 : skill.gap === 1 ? 0.5 : 0;
   // Use skill-level opt if available, otherwise fall back to dept-level opt

@@ -84,7 +84,7 @@ export default function MethodologyModal({ onClose }: MethodologyModalProps) {
             </p>
             <ul className="mt-1 space-y-1 ml-4 list-disc text-white/60">
               <li><strong className="text-white/80">Gap severity</strong> (40%) — How far below the required level</li>
-              <li><strong className="text-white/80">Sustainability impact</strong> (35%) — Average across 16 optimisation factors</li>
+              <li><strong className="text-white/80">Sustainability impact</strong> (35%) — Baseline alignment with Arsenal GSIP pillars</li>
               <li><strong className="text-white/80">Priority level</strong> (25%) — Strategic urgency from the organisation</li>
             </ul>
           </section>
@@ -163,7 +163,7 @@ export default function MethodologyModal({ onClose }: MethodologyModalProps) {
             <h3 className="text-white font-semibold mb-2">CSV Export</h3>
             <p>
               Export a complete gap analysis report including department summaries, risk scores,
-              maturity levels, all skill-level data, and 16 optimisation factor scores.
+              maturity levels, all skill-level data, and Arsenal GSIP sustainability pillars.
             </p>
           </section>
         </div>

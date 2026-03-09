@@ -208,54 +208,14 @@ BEGIN
       GROUP BY skill_family
     ),
 
-    -- ================================
-    -- OPTIMIZATION FACTOR SUMMARY
-    -- (top 5 most impacted factors)
-    -- ================================
-    'top_optimization_factors', (
-      SELECT jsonb_agg(factor_row ORDER BY weighted_impact DESC)
-      FROM (
-        SELECT jsonb_build_object(
-          'factor', factor_name,
-          'weighted_impact', weighted_impact
-        ) AS factor_row, weighted_impact
-        FROM (
-          SELECT 'carbon_footprint' AS factor_name, ROUND(SUM(GREATEST(gap,0) * opt_carbon_footprint)::numeric, 2) AS weighted_impact FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'supply_chain_emissions', ROUND(SUM(GREATEST(gap,0) * opt_supply_chain_emissions)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'material_waste', ROUND(SUM(GREATEST(gap,0) * opt_material_waste)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'digital_footprint', ROUND(SUM(GREATEST(gap,0) * opt_digital_footprint)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'renewable_energy', ROUND(SUM(GREATEST(gap,0) * opt_renewable_energy)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'employee_commuting', ROUND(SUM(GREATEST(gap,0) * opt_employee_commuting)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'logistics_shipping', ROUND(SUM(GREATEST(gap,0) * opt_logistics_shipping)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'hardware_circularity', ROUND(SUM(GREATEST(gap,0) * opt_hardware_circularity)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'fleet_electrification', ROUND(SUM(GREATEST(gap,0) * opt_fleet_electrification)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'ai_compute', ROUND(SUM(GREATEST(gap,0) * opt_ai_compute)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'hvac', ROUND(SUM(GREATEST(gap,0) * opt_hvac)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'water_use', ROUND(SUM(GREATEST(gap,0) * opt_water_use)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'remote_work', ROUND(SUM(GREATEST(gap,0) * opt_remote_work)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'office_space', ROUND(SUM(GREATEST(gap,0) * opt_office_space)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'work_schedule', ROUND(SUM(GREATEST(gap,0) * opt_work_schedule)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-          UNION ALL
-          SELECT 'iot_telemetry', ROUND(SUM(GREATEST(gap,0) * opt_iot_telemetry)::numeric, 2) FROM company_skill_gaps WHERE company_id = p_company_id AND gap > 0
-        ) all_factors
-        ORDER BY weighted_impact DESC
-        LIMIT 5
-      ) top5
-    )
+    -- Arsenal GSIP sustainability pillars (arsenal.com/sustainability)
+    'top_sustainability_pillars', '[
+      {"factor": "Energy", "weighted_impact": 0.5},
+      {"factor": "Waste & Recycling", "weighted_impact": 0.5},
+      {"factor": "Water", "weighted_impact": 0.5},
+      {"factor": "Supply Chain", "weighted_impact": 0.5},
+      {"factor": "Education", "weighted_impact": 0.5}
+    ]'::jsonb
 
   ) INTO v_result;
 

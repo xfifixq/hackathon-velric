@@ -16,7 +16,7 @@ const geistMono = localFont({
 export const metadata: Metadata = {
   title: "GreenPulse | Green Skills Gap Intelligence",
   description:
-    "Interactive neural network visualization of organizational green skills gaps and sustainability optimization factors",
+    "Interactive neural network visualization of organizational green skills gaps and Arsenal GSIP sustainability pillars",
 };
 
 export default function RootLayout({

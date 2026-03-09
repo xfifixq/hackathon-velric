@@ -118,43 +118,13 @@ function HomeContent() {
           ]);
         }
 
-        // Enrich departments with opt_* averages computed from skills data
-        // (handles case where departments table may not have opt_* columns)
-        const optColumns = [
-          "opt_carbon_footprint", "opt_renewable_energy", "opt_hvac",
-          "opt_office_space", "opt_remote_work", "opt_work_schedule",
-          "opt_water_use", "opt_digital_footprint", "opt_ai_compute",
-          "opt_iot_telemetry", "opt_hardware_circularity",
-          "opt_supply_chain_emissions", "opt_logistics_shipping",
-          "opt_fleet_electrification", "opt_employee_commuting", "opt_material_waste",
-        ] as const;
-
         const enrichedDepts = depts.map(dept => {
-          // Find skills for this department
           const deptSkills = skills.filter(
             s => s.department === dept.id || s.department === dept.department
           );
           if (deptSkills.length === 0) return dept;
 
-          // Check if dept already has real opt_* values
-          const hasOpt = optColumns.some(c => {
-            const v = Number((dept as any)[c]);
-            return !isNaN(v) && v > 0;
-          });
-          if (hasOpt) return dept;
-
-          // Average each opt_* column from skills
           const enriched = { ...dept };
-          for (const col of optColumns) {
-            const vals = deptSkills
-              .map(s => Number((s as any)[col]))
-              .filter(v => !isNaN(v));
-            (enriched as any)[col] = vals.length > 0
-              ? vals.reduce((a, b) => a + b, 0) / vals.length
-              : 0;
-          }
-
-          // Also recompute gap counts from skills data
           enriched.critical_gap_count = deptSkills.filter(s => s.severity?.toLowerCase() === "critical").length;
           enriched.moderate_gap_count = deptSkills.filter(s => s.severity?.toLowerCase() === "moderate").length;
           enriched.no_gap_count = deptSkills.filter(s => {

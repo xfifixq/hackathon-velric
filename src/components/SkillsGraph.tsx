@@ -3,8 +3,9 @@
 import React, { useRef, useEffect, useCallback, useState } from "react";
 import * as d3 from "d3";
 import { GreenSkill, SkillFamily } from "@/lib/types";
-import { getSkillSeverityColor } from "@/lib/utils";
+import { getSkillSeverityColor, readinessColor } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
+import { skillReadiness } from "@/data/arsenalPillars";
 
 interface SkillsGraphProps {
   family: SkillFamily;
@@ -34,10 +35,11 @@ export default function SkillsGraph({ family, skills, departmentLabel, onSkillCl
     const width = svgRef.current.clientWidth;
     const height = svgRef.current.clientHeight;
 
-    // Determine hub color from worst skill severity
-    const hasCritical = skills.some(s => s.severity?.toLowerCase() === "critical");
-    const hasModerate = skills.some(s => s.severity?.toLowerCase() === "moderate");
-    const hubColor = hasCritical ? "#ef4444" : hasModerate ? "#f59e0b" : "#22c55e";
+    // Hub % = avg of children, color = worst child (green => all children green). 0–25 red, 25–75 orange, 75+ green.
+    const skillPcts = skills.map(s => skillReadiness(s));
+    const avgReadiness = skillPcts.length > 0 ? Math.round(skillPcts.reduce((a, b) => a + b, 0) / skillPcts.length) : 0;
+    const minPct = skillPcts.length > 0 ? Math.min(...skillPcts) : 0;
+    const hubColor = readinessColor(minPct);
 
     const hubNode: SkillNode = { id: "hub", label: family, isHub: true, color: hubColor, radius: 32 };
 
@@ -45,7 +47,7 @@ export default function SkillsGraph({ family, skills, departmentLabel, onSkillCl
       id: `skill-${skill.id}`,
       label: skill.green_skill,
       isHub: false,
-      color: getSkillSeverityColor(skill.severity),
+      color: readinessColor(skillReadiness(skill)),
       radius: 24,
       skill,
     }));
